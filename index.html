@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Tracker</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    
+    <style>
+        :root { --rh-green: #00c805; --rh-red: #ff5000; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .text-rh-green { color: var(--rh-green); }
+        .text-rh-red { color: var(--rh-red); }
+        .bg-rh-green { background-color: var(--rh-green); }
+        .bg-rh-red { background-color: var(--rh-red); }
+        
+        .price-box { cursor: pointer; transition: all 0.2s; user-select: none; }
+        .price-box:hover { filter: brightness(1.1); transform: scale(1.02); }
+        .price-box:active { transform: scale(0.98); }
+
+        #view-modal { transition: opacity 0.2s ease-in-out; }
+        #view-modal.hidden { opacity: 0; pointer-events: none; }
+        #view-modal:not(.hidden) { opacity: 1; pointer-events: auto; }
+    </style>
+</head>
+<body class="bg-white text-black max-w-2xl mx-auto pb-20 relative min-h-screen">
+
+    <div class="p-6 bg-white border-b border-gray-100">
+        <div class="mb-1">
+            <h1 id="portfolio-value" class="text-4xl font-bold tracking-tight">Loading...</h1>
+        </div>
+        <div class="flex items-center text-sm font-medium mb-4">
+            <span id="portfolio-change-icon" class="mr-1"></span>
+            <span id="portfolio-change-val">Initializing...</span>
+            <span id="timeframe-label" class="text-gray-400 ml-2 font-normal"></span>
+        </div>
+
+        <div class="h-64 w-full mb-6 relative">
+            <canvas id="mainChart"></canvas>
+        </div>
+
+        <div class="flex justify-between font-bold text-xs text-gray-500 px-2" id="time-filters">
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('1W', 'Past Week', this)">1W</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('1M', 'Past Month', this)">1M</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('3M', 'Past 3 Months', this)">3M</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('YTD', 'Year to Date', this)">YTD</button>
+            <button class="hover:text-black py-1 px-2 text-rh-green font-bold" onclick="updateTimeframe('1Y', 'Past Year', this)">1Y</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('5Y', 'Past 5 Years', this)">5Y</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('ALL', 'All Time', this)">ALL</button>
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <div class="px-6 py-2 border-b border-gray-100 flex justify-between items-end">
+            <span class="text-xl font-bold">Stocks & ETFs</span>
+            <span id="display-mode-label" class="text-xs text-gray-400 font-medium uppercase tracking-wider">Last Price</span>
+        </div>
+        <div id="stock-list" class="divide-y divide-gray-100 min-h-[100px]">
+            <div class="p-6 text-center text-gray-500">Connecting to Yahoo Finance...</div>
+        </div>
+    </div>
+
+    <div class="mt-8 px-6 pb-12">
+        <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Performance Summary</h3>
+        <div class="bg-gray-50 rounded-xl p-4 mb-3 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Realized Gain (YTD <span id="ytd-year"></span>)</span>
+            <span id="realized-ytd" class="font-bold text-gray-900">$0.00</span>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Realized Gain (All Time)</span>
+            <span id="realized-total" class="font-bold text-gray-900">$0.00</span>
+        </div>
+    </div>
+
+    <div id="view-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm" onclick="closeModal()">
+        <div class="bg-white w-full max-w-sm mx-4 sm:rounded-xl rounded-t-xl p-4 shadow-2xl transform transition-transform" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
+                <h3 class="font-bold text-lg">Display Mode</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-black">✕</button>
+            </div>
+            <div class="space-y-2">
+                <button onclick="changeDisplayMode('price')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Last Price</span></button>
+                <button onclick="changeDisplayMode('day_gain')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Daily Return ($)</span></button>
+                <button onclick="changeDisplayMode('day_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Daily Return (%)</span></button>
+                <button onclick="changeDisplayMode('total_gain')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Return ($)</span></button>
+                <button onclick="changeDisplayMode('total_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Return (%)</span></button>
+                <button onclick="changeDisplayMode('equity')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Equity</span></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CSV_FILES = {
+            in: 'https://objectstorage.ap-osaka-1.oraclecloud.com/n/axfishw4p7q2/b/stocks/o/stockin.csv',
+            out: 'https://objectstorage.ap-osaka-1.oraclecloud.com/n/axfishw4p7q2/b/stocks/o/stockout.csv'
+        };
+
+        const CORS_PROXY = "https://corsproxy.io/?";
+
+        let appState = {
+            transactions: [], // Store raw transactions to check for "Today's Buys"
+            holdings: {},
+            portfolioHistory: [],
+            realizedYTD: 0,
+            realizedTotal: 0,
+            currentYear: new Date().getFullYear(),
+            displayMode: 'price',
+            activeTimeframe: '1Y'
+        };
+
+        const LABELS = {
+            price: 'Last Price', day_gain: 'Daily Return', day_pct: 'Daily Return %',
+            total_gain: 'Total Return', total_pct: 'Total Return %', equity: 'Equity'
+        };
+
+        // --- HELPER: Get New York Date String (YYYY-MM-DD) ---
+        function getNYDate(timestamp) {
+            const date = new Date(timestamp * 1000); 
+            return date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+        }
+
+        async function init() {
+            try {
+                const [inRes, outRes] = await Promise.all([fetch(CSV_FILES.in), fetch(CSV_FILES.out)]);
+                if (!inRes.ok || !outRes.ok) throw new Error("Failed to fetch CSV files.");
+
+                const inData = Papa.parse(await inRes.text(), { header: true, skipEmptyLines: true }).data;
+                const outData = Papa.parse(await outRes.text(), { header: true, skipEmptyLines: true }).data;
+
+                let transactions = [];
+                inData.forEach(row => { if(row['股票代码']) transactions.push(parseTransaction(row, 'buy')); });
+                outData.forEach(row => { if(row['股票代码']) transactions.push(parseTransaction(row, 'sell')); });
+                transactions.sort((a, b) => a.date - b.date);
+
+                // Save for later "New Share" calculations
+                appState.transactions = transactions;
+
+                if(transactions.length > 0) appState.currentYear = Math.max(...transactions.map(t => t.year));
+
+                calculateHoldings(transactions);
+                await fetchRealMarketData();
+                buildPortfolioHistory();
+                updateTimeframe('1Y', 'Past Year');
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-red-500">Error: ${err.message}</div>`;
+            }
+        }
+
+        function parseTransaction(row, type) {
+            const dateStr = type === 'buy' ? row['购入时间'] : row['售出时间'];
+            // Create formatted string YYYY-MM-DD
+            const fmtDate = dateStr ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : new Date().toISOString().split('T')[0];
+            
+            const priceVal = parseFloat((type === 'buy' ? row['购入价格'] : row['售出价格']).replace(/[$,]/g, ''));
+            const volVal = parseInt(type === 'buy' ? row['购入数量'] : row['售出数量'], 10);
+            
+            return {
+                ticker: row['股票代码'], 
+                type: type, 
+                date: new Date(fmtDate), 
+                dateStr: fmtDate, // Store string explicitly for matching
+                year: parseInt(dateStr.substring(0,4)), 
+                price: priceVal, 
+                volume: volVal
+            };
+        }
+
+        function calculateHoldings(transactions) {
+            const holdings = {};
+            let realizedTotal = 0, realizedYTD = 0;
+
+            transactions.forEach(t => {
+                if (!holdings[t.ticker]) holdings[t.ticker] = { shares: 0, totalCost: 0 };
+                if (t.type === 'buy') {
+                    holdings[t.ticker].shares += t.volume;
+                    holdings[t.ticker].totalCost += (t.price * t.volume);
+                } else {
+                    if (holdings[t.ticker].shares > 0) {
+                        const avgCostPerShare = holdings[t.ticker].totalCost / holdings[t.ticker].shares;
+                        const gain = (t.price - avgCostPerShare) * t.volume;
+                        realizedTotal += gain;
+                        if (t.year === appState.currentYear) realizedYTD += gain;
+                        holdings[t.ticker].totalCost -= (avgCostPerShare * t.volume);
+                        holdings[t.ticker].shares -= t.volume;
+                    }
+                }
+            });
+
+            Object.keys(holdings).forEach(ticker => {
+                const h = holdings[ticker];
+                if (h.shares <= 0.001) delete holdings[ticker];
+                else h.avgCost = h.totalCost / h.shares;
+            });
+
+            appState.holdings = holdings;
+            appState.realizedTotal = realizedTotal;
+            appState.realizedYTD = realizedYTD;
+        }
+
+        async function fetchRealMarketData() {
+            const tickers = Object.keys(appState.holdings);
+            document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-gray-500">Syncing ${tickers.length} stocks...</div>`;
+
+            const requests = tickers.map(async (ticker) => {
+                try {
+                    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5y&interval=1d`;
+                    const proxyUrl = CORS_PROXY + encodeURIComponent(yahooUrl);
+                    const res = await fetch(proxyUrl);
+                    const data = await res.json();
+                    
+                    if(!data.chart || !data.chart.result) throw new Error("Invalid Data");
+                    const result = data.chart.result[0];
+                    const meta = result.meta;
+                    const quotes = result.indicators.quote[0];
+                    const timestamps = result.timestamp || [];
+
+                    let history = timestamps.map((ts, i) => ({
+                        date: ts, price: quotes.close[i]
+                    })).filter(h => h.price !== null);
+
+                    if(appState.holdings[ticker]) {
+                        appState.holdings[ticker].currentPrice = meta.regularMarketPrice;
+                        appState.holdings[ticker].prevClose = meta.chartPreviousClose;
+                        appState.holdings[ticker].history = history;
+                    }
+
+                } catch (e) {
+                    console.error(`Fetch error ${ticker}`, e);
+                    if(appState.holdings[ticker]) {
+                        appState.holdings[ticker].currentPrice = appState.holdings[ticker].avgCost; 
+                        appState.holdings[ticker].prevClose = appState.holdings[ticker].avgCost;
+                        appState.holdings[ticker].history = []; 
+                    }
+                }
+            });
+            await Promise.all(requests);
+        }
+
+        function buildPortfolioHistory() {
+            const dateMap = {}; 
+            Object.keys(appState.holdings).forEach(ticker => {
+                const stock = appState.holdings[ticker];
+                if(!stock.history) return;
+                stock.history.forEach(point => {
+                    const nyDate = getNYDate(point.date); 
+                    if(!dateMap[nyDate]) dateMap[nyDate] = 0;
+                    dateMap[nyDate] += (point.price * stock.shares);
+                });
+            });
+
+            const todayNY = getNYDate(Date.now() / 1000);
+            let todayValue = 0;
+            Object.values(appState.holdings).forEach(stock => {
+                todayValue += stock.currentPrice * stock.shares;
+            });
+            dateMap[todayNY] = todayValue;
+
+            const sortedDates = Object.keys(dateMap).sort(); 
+            appState.portfolioHistory = sortedDates.map(dateStr => {
+                const d = new Date(dateStr + "T12:00:00-05:00"); 
+                return { date: d.getTime() / 1000, value: dateMap[dateStr] };
+            });
+        }
+
+        function filterHistory(data, timeframe) {
+            if(!data || data.length === 0) return [];
+            const now = dayjs();
+            let cutoff;
+            switch(timeframe) {
+                case '1W': cutoff = now.subtract(1, 'week'); break;
+                case '1M': cutoff = now.subtract(1, 'month'); break;
+                case '3M': cutoff = now.subtract(3, 'month'); break;
+                case 'YTD': cutoff = dayjs().startOf('year'); break;
+                case '1Y': cutoff = now.subtract(1, 'year'); break;
+                case '5Y': cutoff = now.subtract(5, 'year'); break;
+                case 'ALL': return data;
+                default: return data;
+            }
+            const cutoffTs = cutoff.unix();
+            return data.filter(d => d.date >= cutoffTs);
+        }
+
+        function updateTimeframe(tf, label, btn) {
+            appState.activeTimeframe = tf;
+            document.getElementById('timeframe-label').innerText = label || tf;
+            if(btn) {
+                document.querySelectorAll('#time-filters button').forEach(b => {
+                    b.classList.remove('text-rh-green', 'text-rh-red', 'font-bold');
+                    b.classList.add('text-gray-500');
+                });
+            }
+            renderApp();
+            if(btn) {
+                const isUp = isPortfolioUp();
+                btn.classList.remove('text-gray-500');
+                btn.classList.add(isUp ? 'text-rh-green' : 'text-rh-red', 'font-bold');
+            }
+        }
+
+        function isPortfolioUp() {
+            const data = filterHistory(appState.portfolioHistory, appState.activeTimeframe);
+            if(data.length < 2) return true;
+            return data[data.length-1].value >= data[0].value;
+        }
+
+        function getPriorClose(stock) {
+            const todayNY = getNYDate(Date.now() / 1000);
+            if (stock.history && stock.history.length > 0) {
+                for (let i = stock.history.length - 1; i >= 0; i--) {
+                    const pointDate = getNYDate(stock.history[i].date);
+                    if (pointDate !== todayNY) return stock.history[i].price;
+                }
+            }
+            return stock.prevClose || stock.currentPrice;
+        }
+
+        function renderApp() { renderHeader(); renderList(); renderRealized(); }
+
+        function renderHeader() {
+            const filteredData = filterHistory(appState.portfolioHistory, appState.activeTimeframe);
+            if(filteredData.length === 0) return;
+
+            const currentVal = filteredData[filteredData.length-1].value;
+            const startVal = filteredData[0].value;
+            const diff = currentVal - startVal;
+            const pct = startVal > 0 ? (diff / startVal) * 100 : 0;
+            const isUp = diff >= 0;
+            const color = isUp ? '#00c805' : '#ff5000';
+            const colorClass = isUp ? 'text-rh-green' : 'text-rh-red';
+
+            document.getElementById('portfolio-value').innerText = formatCurrency(currentVal);
+            const changeEl = document.getElementById('portfolio-change-val');
+            changeEl.innerHTML = `${isUp ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`;
+            changeEl.className = `${colorClass}`;
+            document.getElementById('portfolio-change-icon').innerHTML = isUp ? '▲' : '▼';
+            document.getElementById('portfolio-change-icon').className = `mr-1 ${colorClass}`;
+
+            const chartData = filteredData.map(d => d.value);
+            const chartLabels = filteredData.map(d => dayjs.unix(d.date).format('MMM D'));
+            drawMainChart(chartData, chartLabels, color);
+        }
+
+        function renderList() {
+            const listEl = document.getElementById('stock-list');
+            listEl.innerHTML = '';
+            document.getElementById('display-mode-label').innerText = LABELS[appState.displayMode];
+            const todayNY = getNYDate(Date.now() / 1000);
+
+            Object.keys(appState.holdings).sort().forEach(ticker => {
+                const stock = appState.holdings[ticker];
+                const history1Y = filterHistory(stock.history, '1Y'); 
+                const sparkData = history1Y.map(h => h.price);
+
+                // --- NEW "TODAY" LOGIC ---
+                // 1. Identify New Shares (Bought Today)
+                const todayBuys = appState.transactions.filter(t => 
+                    t.ticker === ticker && 
+                    t.type === 'buy' && 
+                    t.dateStr === todayNY // match string YYYY-MM-DD
+                );
+
+                let sharesToday = 0;
+                let costToday = 0;
+                todayBuys.forEach(t => {
+                    sharesToday += t.volume;
+                    costToday += (t.price * t.volume);
+                });
+                
+                // Effective Shares held "Yesterday" = Total Shares - New Shares
+                // (Safeguard against weird sell cases by min/max)
+                const effectiveSharesToday = Math.min(stock.shares, sharesToday);
+                const effectiveSharesPrior = stock.shares - effectiveSharesToday;
+                const avgBuyPriceToday = effectiveSharesToday > 0 ? costToday / sharesToday : 0; // Use cost of original buys
+
+                // 2. Base Price for Old Shares = Yesterday's Close
+                const priorClose = getPriorClose(stock);
+
+                // 3. Calculate Weighted Daily Gain
+                const gainFromPrior = effectiveSharesPrior * (stock.currentPrice - priorClose);
+                const gainFromToday = effectiveSharesToday * (stock.currentPrice - avgBuyPriceToday);
+                const totalDailyGain = gainFromPrior + gainFromToday;
+
+                // 4. Calculate Weighted Daily Basis for %
+                const dailyBasis = (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
+                const totalDailyPct = dailyBasis > 0 ? (totalDailyGain / dailyBasis) * 100 : 0;
+
+                // Total Return (Standard)
+                const diffTotal = (stock.currentPrice - stock.avgCost) * stock.shares;
+                const pctTotal = ((stock.currentPrice - stock.avgCost) / stock.avgCost) * 100;
+                const equity = stock.currentPrice * stock.shares;
+
+                let text = "";
+                // Use the calculated totalDailyGain to decide color
+                let boxColor = (totalDailyGain >= 0) ? 'bg-rh-green' : 'bg-rh-red';
+
+                switch(appState.displayMode) {
+                    case 'price': text = formatCurrency(stock.currentPrice); break;
+                    case 'day_gain': text = (totalDailyGain>0?"+":"") + formatCurrency(totalDailyGain); break;
+                    case 'day_pct': text = (totalDailyPct>0?"+":"") + totalDailyPct.toFixed(2) + "%"; break;
+                    case 'total_gain': 
+                        text = (diffTotal>0?"+":"") + formatCurrency(diffTotal); 
+                        boxColor = (diffTotal >= 0) ? 'bg-rh-green' : 'bg-rh-red'; break;
+                    case 'total_pct': 
+                        text = (pctTotal>0?"+":"") + pctTotal.toFixed(2) + "%"; 
+                        boxColor = (pctTotal >= 0) ? 'bg-rh-green' : 'bg-rh-red'; break;
+                    case 'equity': text = formatCurrency(equity); break;
+                }
+
+                const row = document.createElement('div');
+                row.className = "px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition border-b border-gray-50";
+                const canvasId = `chart-${ticker}`;
+
+                row.innerHTML = `
+                    <div class="w-1/4">
+                        <div class="font-bold text-base">${ticker}</div>
+                        <div class="text-xs text-gray-500">${stock.shares} shares</div>
+                    </div>
+                    <div class="w-1/3 h-12 px-2">
+                        <canvas id="${canvasId}" class="w-full h-full"></canvas>
+                    </div>
+                    <div class="w-1/3 flex justify-end">
+                        <div class="price-box ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" onclick="openModal()">
+                             ${text}
+                        </div>
+                    </div>`;
+                listEl.appendChild(row);
+                drawSparkline(canvasId, sparkData, (totalDailyGain >= 0) ? '#00c805' : '#ff5000');
+            });
+        }
+
+        function renderRealized() {
+            document.getElementById('ytd-year').innerText = appState.currentYear;
+            const elYTD = document.getElementById('realized-ytd');
+            const elTotal = document.getElementById('realized-total');
+            elYTD.innerText = (appState.realizedYTD > 0 ? "+" : "") + formatCurrency(appState.realizedYTD);
+            elYTD.className = `font-bold ${appState.realizedYTD >= 0 ? 'text-rh-green' : 'text-rh-red'}`;
+            elTotal.innerText = (appState.realizedTotal > 0 ? "+" : "") + formatCurrency(appState.realizedTotal);
+            elTotal.className = `font-bold ${appState.realizedTotal >= 0 ? 'text-rh-green' : 'text-rh-red'}`;
+        }
+
+        function drawMainChart(data, labels, color) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            if (window.portfolioChart) window.portfolioChart.destroy();
+            window.portfolioChart = new Chart(ctx, {
+                type: 'line',
+                data: { 
+                    labels: labels, 
+                    datasets: [{ data: data, borderColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: color, fill: false, tension: 0.1 }] 
+                },
+                options: { 
+                    responsive: true, maintainAspectRatio: false, 
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { display: false }, tooltip: { enabled: true, callbacks: { label: c => formatCurrency(c.parsed.y) } } },
+                    scales: { x: { display: false }, y: { display: false } }
+                }
+            });
+        }
+
+        function drawSparkline(id, data, color) {
+            const ctx = document.getElementById(id).getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: { labels: data.map((_, i) => i), datasets: [{ data: data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.1 }] },
+                options: { responsive: true, maintainAspectRatio: false, events:[], plugins:{legend:{display:false}, tooltip:{enabled:false}}, scales:{x:{display:false}, y:{display:false}} }
+            });
+        }
+
+        function openModal() { document.getElementById('view-modal').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('view-modal').classList.add('hidden'); }
+        function changeDisplayMode(mode) { appState.displayMode = mode; closeModal(); renderList(); }
+        function formatCurrency(val) { return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+        init();
+    </script>
+</body>
+</html>
