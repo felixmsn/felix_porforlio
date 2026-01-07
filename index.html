@@ -221,9 +221,7 @@
             const fmtDate = dateStr ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : new Date().toISOString().split('T')[0];
             const priceVal = parseFloat((type === 'buy' ? row['购入价格'] : row['售出价格']).replace(/[$,]/g, ''));
             const volVal = parseInt(type === 'buy' ? row['购入数量'] : row['售出数量'], 10);
-            
             const estDate = new Date(`${fmtDate}T12:00:00-05:00`); 
-
             return {
                 ticker: row['股票代码'], type: type, date: estDate, dateStr: fmtDate, timestamp: estDate.getTime()/1000,
                 year: parseInt(dateStr.substring(0,4)), price: priceVal, volume: volVal
@@ -296,9 +294,7 @@
         async function fetchRealMarketData() {
             const holdingTickers = Object.keys(appState.holdings);
             const allTickers = [...new Set([...holdingTickers, ...INDEX_TICKERS])];
-
             document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-gray-500">Syncing ${allTickers.length} tickers...</div>`;
-            
             const requests = allTickers.map(async (ticker) => {
                 try {
                     const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5y&interval=1d`;
@@ -311,25 +307,16 @@
                     const timestamps = data.chart.result[0].timestamp || [];
                     const history = timestamps.map((ts, i) => ({ date: ts, price: quotes.close[i] })).filter(h => h.price !== null);
 
-                    const priceObj = {
-                        currentPrice: meta.regularMarketPrice,
-                        prevClose: meta.chartPreviousClose,
-                        history: history
-                    };
+                    const priceObj = { currentPrice: meta.regularMarketPrice, prevClose: meta.chartPreviousClose, history: history };
 
-                    if (INDEX_TICKERS.includes(ticker)) {
-                        appState.indexes[ticker] = priceObj;
-                    } 
+                    if (INDEX_TICKERS.includes(ticker)) appState.indexes[ticker] = priceObj;
                     
                     if(appState.holdings[ticker]) {
                         appState.holdings[ticker].currentPrice = priceObj.currentPrice;
                         appState.holdings[ticker].prevClose = priceObj.prevClose;
                         appState.holdings[ticker].history = priceObj.history;
-                        
                         appState.holdings[ticker].priceMap = {};
-                        history.forEach(h => {
-                            appState.holdings[ticker].priceMap[getNYDate(h.date)] = h.price;
-                        });
+                        history.forEach(h => { appState.holdings[ticker].priceMap[getNYDate(h.date)] = h.price; });
                         const todayNY = getNYDate(Date.now()/1000);
                         appState.holdings[ticker].priceMap[todayNY] = meta.regularMarketPrice;
                     }
@@ -342,14 +329,8 @@
             const allDates = new Set();
             const todayNY = getNYDate(Date.now()/1000);
             allDates.add(todayNY);
-
-            Object.values(appState.holdings).forEach(s => {
-                if(s.history) s.history.forEach(h => allDates.add(getNYDate(h.date)));
-            });
-            appState.allLots.forEach(lot => {
-                allDates.add(getNYDate(lot.buyDate));
-                if(lot.sellDate) allDates.add(getNYDate(lot.sellDate));
-            });
+            Object.values(appState.holdings).forEach(s => { if(s.history) s.history.forEach(h => allDates.add(getNYDate(h.date))); });
+            appState.allLots.forEach(lot => { allDates.add(getNYDate(lot.buyDate)); if(lot.sellDate) allDates.add(getNYDate(lot.sellDate)); });
 
             const sortedDateStrs = Array.from(allDates).sort();
             const lastKnownPrices = {}; 
@@ -357,29 +338,22 @@
             appState.portfolioHistory = sortedDateStrs.map(dateStr => {
                 const d = new Date(dateStr + "T12:00:00-05:00");
                 const timestamp = d.getTime() / 1000;
-
                 Object.keys(appState.holdings).forEach(ticker => {
                     const price = appState.holdings[ticker].priceMap?.[dateStr];
                     if(price !== undefined) lastKnownPrices[ticker] = price;
                 });
-
                 let totalValue = 0;
-
                 appState.allLots.forEach(lot => {
                     const buyDateStr = getNYDate(lot.buyDate);
                     const sellDateStr = lot.sellDate ? getNYDate(lot.sellDate) : null;
-
-                    if (dateStr < buyDateStr) {
-                        totalValue += (lot.shares * lot.buyPrice);
-                    } else if (sellDateStr && dateStr >= sellDateStr) {
-                        totalValue += (lot.shares * lot.sellPrice);
-                    } else {
+                    if (dateStr < buyDateStr) totalValue += (lot.shares * lot.buyPrice);
+                    else if (sellDateStr && dateStr >= sellDateStr) totalValue += (lot.shares * lot.sellPrice);
+                    else {
                         let price = lastKnownPrices[lot.ticker];
                         if (price === undefined) price = lot.buyPrice;
                         totalValue += (lot.shares * price);
                     }
                 });
-
                 return { date: timestamp, value: totalValue };
             });
         }
@@ -424,20 +398,110 @@
             return stock.prevClose || stock.currentPrice;
         }
 
+        function calculateDisplayValue(ticker, section) {
+            // Helper to calculate text and color for smart updating
+            let text = "", boxColor = "";
+            const stock = appState.holdings[ticker];
+            const idx = appState.indexes[ticker];
+            
+            if (section === 'index' && idx) {
+                // Indexes (Yearly Logic)
+                const history1Y = filterHistory(idx.history, '1Y');
+                const startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
+                const diff = idx.currentPrice - startPrice;
+                const pct = startPrice > 0 ? (diff / startPrice) * 100 : 0;
+                const isUp = diff >= 0;
+                boxColor = isUp ? 'bg-rh-green' : 'bg-rh-red';
+
+                if(appState.indexDisplayMode === 'index_val') text = formatIndex(idx.currentPrice);
+                else if(appState.indexDisplayMode === 'index_chg') text = (diff>0?"+":"") + diff.toFixed(2);
+                else text = (diff>0?"+":"") + pct.toFixed(2) + "%";
+                return { text, boxColor };
+            }
+
+            if (!stock) return { text: "Err", boxColor: "bg-gray-500" };
+
+            // Stock Logic (Active/Watchlist)
+            const isWatchlist = stock.shares === 0;
+            const history1Y = filterHistory(stock.history, '1Y'); 
+            const todayNY = getNYDate(Date.now() / 1000);
+            
+            // ... (Shared Math from renderLists) ...
+            const todayBuys = appState.transactions.filter(t => t.ticker === ticker && t.type === 'buy' && t.dateStr === todayNY);
+            let sharesToday = 0, costToday = 0;
+            todayBuys.forEach(t => { sharesToday += t.volume; costToday += (t.price * t.volume); });
+            const effectiveSharesToday = Math.min(stock.shares, sharesToday);
+            const effectiveSharesPrior = stock.shares - effectiveSharesToday;
+            const avgBuyPriceToday = effectiveSharesToday > 0 ? costToday / sharesToday : 0;
+            const priorClose = getPriorClose(stock);
+            
+            if (isWatchlist) {
+                const startPrice = history1Y.length > 0 ? history1Y[0].price : stock.currentPrice;
+                const diffYear = stock.currentPrice - startPrice;
+                const pctYear = startPrice > 0 ? (diffYear / startPrice) * 100 : 0;
+                boxColor = diffYear >= 0 ? 'bg-rh-green' : 'bg-rh-red';
+                if (appState.watchlistDisplayMode === 'price') text = formatCurrency(stock.currentPrice);
+                else if (appState.watchlistDisplayMode === 'year_gain') text = (diffYear > 0 ? "+" : "") + formatCurrency(diffYear);
+                else if (appState.watchlistDisplayMode === 'year_pct') text = (pctYear > 0 ? "+" : "") + pctYear.toFixed(2) + "%";
+                else text = formatCurrency(stock.currentPrice);
+            } else {
+                const gainFromPrior = effectiveSharesPrior * (stock.currentPrice - priorClose);
+                const gainFromToday = effectiveSharesToday * (stock.currentPrice - avgBuyPriceToday);
+                const totalDailyGain = gainFromPrior + gainFromToday;
+                const dailyBasis = (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
+                const totalDailyPct = dailyBasis > 0 ? (totalDailyGain / dailyBasis) * 100 : 0;
+                const diffTotal = (stock.currentPrice - stock.avgCost) * stock.shares;
+                const pctTotal = ((stock.currentPrice - stock.avgCost) / stock.avgCost) * 100;
+                const equity = stock.currentPrice * stock.shares;
+                boxColor = (totalDailyGain >= 0) ? 'bg-rh-green' : 'bg-rh-red';
+                switch(appState.activeDisplayMode) {
+                    case 'price': text = formatCurrency(stock.currentPrice); break;
+                    case 'day_gain': text = (totalDailyGain>0?"+":"") + formatCurrency(totalDailyGain); break;
+                    case 'day_pct': text = (totalDailyPct>0?"+":"") + totalDailyPct.toFixed(2) + "%"; break;
+                    case 'total_gain': text = (diffTotal>0?"+":"") + formatCurrency(diffTotal); boxColor = (diffTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
+                    case 'total_pct': text = (pctTotal>0?"+":"") + pctTotal.toFixed(2) + "%"; boxColor = (pctTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
+                    case 'equity': text = formatCurrency(equity); break;
+                }
+            }
+            return { text, boxColor };
+        }
+
+        // --- NEW: Smart Partial Update Function ---
+        function updateVisiblePrices(section) {
+            // Find all price boxes for this section
+            const boxes = document.querySelectorAll(`.price-box-${section}`);
+            
+            // Update Header Label
+            let labelId = "", labelText = "";
+            if(section === 'active') { labelId='active-mode-label'; labelText=LABELS[appState.activeDisplayMode]; }
+            else if(section === 'watchlist') { labelId='watchlist-mode-label'; labelText=LABELS[appState.watchlistDisplayMode]; }
+            else if(section === 'index') { labelId='index-mode-label'; labelText=LABELS[appState.indexDisplayMode]; }
+            document.getElementById(labelId).innerText = labelText;
+
+            boxes.forEach(box => {
+                const ticker = box.getAttribute('data-ticker');
+                const { text, boxColor } = calculateDisplayValue(ticker, section);
+                
+                // Update Text
+                box.innerText = text;
+                
+                // Update Color Class (remove old bg-, add new)
+                box.classList.remove('bg-rh-green', 'bg-rh-red');
+                box.classList.add(boxColor);
+            });
+        }
+
         function renderApp() { renderHeader(); renderLists(); renderRealized(); renderIndexes(); }
 
-        // --- Render Lists (Active & Watchlist) ---
         function renderLists() {
             const activeList = document.getElementById('stock-list');
             const watchlistList = document.getElementById('watchlist-list');
             const watchlistSection = document.getElementById('watchlist-section');
             activeList.innerHTML = '';
             watchlistList.innerHTML = '';
-            
             document.getElementById('active-mode-label').innerText = LABELS[appState.activeDisplayMode];
             document.getElementById('watchlist-mode-label').innerText = LABELS[appState.watchlistDisplayMode];
             
-            const todayNY = getNYDate(Date.now() / 1000);
             let hasWatchlistItems = false;
 
             Object.keys(appState.holdings).sort().forEach(ticker => {
@@ -447,56 +511,21 @@
 
                 const history1Y = filterHistory(stock.history, '1Y'); 
                 const sparkData = history1Y.map(h => h.price);
-
-                const todayBuys = appState.transactions.filter(t => t.ticker === ticker && t.type === 'buy' && t.dateStr === todayNY);
-                let sharesToday = 0, costToday = 0;
-                todayBuys.forEach(t => { sharesToday += t.volume; costToday += (t.price * t.volume); });
                 
-                const priorClose = getPriorClose(stock);
-                let text = "", boxColor = "";
-
-                if (isWatchlist) {
-                    const startPrice = history1Y.length > 0 ? history1Y[0].price : stock.currentPrice;
-                    const diffYear = stock.currentPrice - startPrice;
-                    const pctYear = startPrice > 0 ? (diffYear / startPrice) * 100 : 0;
-                    boxColor = diffYear >= 0 ? 'bg-rh-green' : 'bg-rh-red';
-
-                    if (appState.watchlistDisplayMode === 'price') text = formatCurrency(stock.currentPrice);
-                    else if (appState.watchlistDisplayMode === 'year_gain') text = (diffYear > 0 ? "+" : "") + formatCurrency(diffYear);
-                    else if (appState.watchlistDisplayMode === 'year_pct') text = (pctYear > 0 ? "+" : "") + pctYear.toFixed(2) + "%";
-                    else text = formatCurrency(stock.currentPrice);
-
-                } else {
-                    const effectiveSharesToday = Math.min(stock.shares, sharesToday);
-                    const effectiveSharesPrior = stock.shares - effectiveSharesToday;
-                    const avgBuyPriceToday = effectiveSharesToday > 0 ? costToday / sharesToday : 0;
-                    
-                    const gainFromPrior = effectiveSharesPrior * (stock.currentPrice - priorClose);
-                    const gainFromToday = effectiveSharesToday * (stock.currentPrice - avgBuyPriceToday);
-                    const totalDailyGain = gainFromPrior + gainFromToday;
-                    const dailyBasis = (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
-                    const totalDailyPct = dailyBasis > 0 ? (totalDailyGain / dailyBasis) * 100 : 0;
-                    const diffTotal = (stock.currentPrice - stock.avgCost) * stock.shares;
-                    const pctTotal = ((stock.currentPrice - stock.avgCost) / stock.avgCost) * 100;
-                    const equity = stock.currentPrice * stock.shares;
-
-                    boxColor = (totalDailyGain >= 0) ? 'bg-rh-green' : 'bg-rh-red';
-
-                    switch(appState.activeDisplayMode) {
-                        case 'price': text = formatCurrency(stock.currentPrice); break;
-                        case 'day_gain': text = (totalDailyGain>0?"+":"") + formatCurrency(totalDailyGain); break;
-                        case 'day_pct': text = (totalDailyPct>0?"+":"") + totalDailyPct.toFixed(2) + "%"; break;
-                        case 'total_gain': text = (diffTotal>0?"+":"") + formatCurrency(diffTotal); boxColor = (diffTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
-                        case 'total_pct': text = (pctTotal>0?"+":"") + pctTotal.toFixed(2) + "%"; boxColor = (pctTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
-                        case 'equity': text = formatCurrency(equity); break;
-                    }
-                }
+                // Initial Calculation for First Render
+                const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
+                
+                // Determine Sparkline Color (Green if box is green? Or logic based?)
+                // Active: Daily Green/Red. Watchlist: Yearly Green/Red.
+                // Fortunately boxColor already captures this logic from calculateDisplayValue!
+                const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
                 row.className = "px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition border-b border-gray-50 cursor-pointer";
                 row.onclick = () => openHistory(ticker);
                 const canvasId = `chart-${ticker}`;
-                
+                const sectionClass = isWatchlist ? 'price-box-watchlist' : 'price-box-active';
+
                 row.innerHTML = `
                     <div class="w-1/4">
                         <div class="font-bold text-base">${ticker}</div>
@@ -504,7 +533,8 @@
                     </div>
                     <div class="w-1/3 h-12 px-2"><canvas id="${canvasId}" class="w-full h-full"></canvas></div>
                     <div class="w-1/3 flex justify-end">
-                        <div class="price-box ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                        <div class="price-box ${sectionClass} ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                             data-ticker="${ticker}"
                              onclick="event.stopPropagation(); openDisplayModal(${isWatchlist})">
                              ${text}
                         </div>
@@ -512,8 +542,6 @@
                 
                 if (isWatchlist) watchlistList.appendChild(row);
                 else activeList.appendChild(row);
-
-                const isGreen = isWatchlist ? (boxColor.includes('green')) : (boxColor.includes('green'));
                 drawSparkline(canvasId, sparkData, isGreen ? '#00c805' : '#ff5000');
             });
 
@@ -521,7 +549,6 @@
             else watchlistSection.classList.add('hidden');
         }
 
-        // --- Render Indexes ---
         function renderIndexes() {
             const container = document.getElementById('indexes-list');
             container.innerHTML = '';
@@ -530,24 +557,13 @@
             INDEX_TICKERS.forEach(ticker => {
                 const idx = appState.indexes[ticker];
                 if (!idx) return;
-
                 const name = INDEX_NAMES[ticker] || ticker;
                 const history1Y = filterHistory(idx.history, '1Y');
                 const sparkData = history1Y.map(h => h.price);
                 
-                // 1-YEAR CHANGE LOGIC
-                const startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
-                const diff = idx.currentPrice - startPrice;
-                const pct = startPrice > 0 ? (diff / startPrice) * 100 : 0;
-                
-                const isUp = diff >= 0;
-                const boxColor = isUp ? 'bg-rh-green' : 'bg-rh-red';
-                const chartColor = isUp ? '#00c805' : '#ff5000';
-
-                let text = "";
-                if(appState.indexDisplayMode === 'index_val') text = formatIndex(idx.currentPrice); // No $
-                else if(appState.indexDisplayMode === 'index_chg') text = (diff>0?"+":"") + diff.toFixed(2);
-                else text = (diff>0?"+":"") + pct.toFixed(2) + "%";
+                // Initial calc
+                const { text, boxColor } = calculateDisplayValue(ticker, 'index');
+                const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
                 row.className = "px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition border-b border-gray-50 cursor-pointer";
@@ -560,14 +576,14 @@
                     </div>
                     <div class="w-1/3 h-12 px-2"><canvas id="${canvasId}" class="w-full h-full"></canvas></div>
                     <div class="w-1/3 flex justify-end">
-                        <div class="price-box ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                        <div class="price-box price-box-index ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                             data-ticker="${ticker}"
                              onclick="event.stopPropagation(); openDisplayModal(false, true)">
                              ${text}
                         </div>
                     </div>`;
-                
                 container.appendChild(row);
-                drawSparkline(canvasId, sparkData, chartColor);
+                drawSparkline(canvasId, sparkData, isGreen ? '#00c805' : '#ff5000');
             });
         }
 
@@ -621,24 +637,16 @@
         }
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
         
-        // --- FIXED: Conditional Re-render Logic to Prevent Jump ---
         function changeDisplayMode(mode) { 
-            closeModal('view-modal');
+            if (appState.currentModalTarget === 'watchlist') appState.watchlistDisplayMode = mode;
+            else if (appState.currentModalTarget === 'index') appState.indexDisplayMode = mode;
+            else appState.activeDisplayMode = mode;
             
-            if (appState.currentModalTarget === 'index') {
-                appState.indexDisplayMode = mode;
-                renderIndexes(); // Only update index section
-            } else {
-                // Update active or watchlist state
-                if (appState.currentModalTarget === 'watchlist') {
-                    appState.watchlistDisplayMode = mode;
-                } else {
-                    appState.activeDisplayMode = mode;
-                }
-                renderLists(); // Update lists (Active + Watchlist)
-            }
+            closeModal('view-modal'); 
+            
+            // OPTIMIZATION: Update Text Only (No Re-render)
+            updateVisiblePrices(appState.currentModalTarget);
         }
-        
         function formatCurrency(val) { return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
         function formatIndex(val) { return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
