@@ -338,7 +338,6 @@
             await Promise.all(requests);
         }
 
-        // --- HISTORY BUILDER ---
         function buildPortfolioHistory() {
             const allDates = new Set();
             const todayNY = getNYDate(Date.now()/1000);
@@ -621,14 +620,25 @@
             document.getElementById('view-modal').classList.remove('hidden'); 
         }
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+        
+        // --- FIXED: Conditional Re-render Logic to Prevent Jump ---
         function changeDisplayMode(mode) { 
-            if (appState.currentModalTarget === 'watchlist') appState.watchlistDisplayMode = mode;
-            else if (appState.currentModalTarget === 'index') appState.indexDisplayMode = mode;
-            else appState.activeDisplayMode = mode;
-            closeModal('view-modal'); 
-            renderLists(); 
-            renderIndexes();
+            closeModal('view-modal');
+            
+            if (appState.currentModalTarget === 'index') {
+                appState.indexDisplayMode = mode;
+                renderIndexes(); // Only update index section
+            } else {
+                // Update active or watchlist state
+                if (appState.currentModalTarget === 'watchlist') {
+                    appState.watchlistDisplayMode = mode;
+                } else {
+                    appState.activeDisplayMode = mode;
+                }
+                renderLists(); // Update lists (Active + Watchlist)
+            }
         }
+        
         function formatCurrency(val) { return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
         function formatIndex(val) { return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
