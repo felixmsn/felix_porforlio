@@ -61,7 +61,7 @@
             <span id="active-mode-label" class="text-xs text-gray-400 font-medium uppercase tracking-wider">Last Price</span>
         </div>
         <div id="stock-list" class="divide-y divide-gray-100 min-h-[100px]">
-            <div class="p-6 text-center text-gray-500">Connecting to Yahoo Finance...</div>
+            <div class="p-6 text-center text-gray-500">Connecting to NAS Proxy...</div>
         </div>
     </div>
 
@@ -152,27 +152,17 @@
             out: 'https://objectstorage.ap-osaka-1.oraclecloud.com/n/axfishw4p7q2/b/stocks/o/stockout.csv'
         };
 
-        const CORS_PROXY = "https://corsproxy.io/?";
+        // --- NAS CONFIGURATION ---
+        const NAS_PROXY_BASE = 'https://weblog.tskspree.link:3030'; 
+
         const INDEX_TICKERS = ['^GSPC', '^DJI', '^IXIC'];
         const INDEX_NAMES = {'^GSPC': 'S&P 500', '^DJI': 'Dow Jones', '^IXIC': 'NASDAQ'};
 
         let appState = {
-            transactions: [], 
-            holdings: {},
-            indexes: {}, 
-            allLots: [],
-            portfolioHistory: [],
-            realizedYTD: 0,
-            realizedTotal: 0,
-            currentYear: new Date().getFullYear(),
-            
-            // Display modes
-            activeDisplayMode: 'price',
-            watchlistDisplayMode: 'year_pct',
-            indexDisplayMode: 'index_pct',
-            
-            activeTimeframe: '1Y',
-            currentModalTarget: 'active' 
+            transactions: [], holdings: {}, indexes: {}, allLots: [], portfolioHistory: [],
+            realizedYTD: 0, realizedTotal: 0, currentYear: new Date().getFullYear(),
+            activeDisplayMode: 'price', watchlistDisplayMode: 'year_pct', indexDisplayMode: 'index_pct',
+            activeTimeframe: '1Y', currentModalTarget: 'active' 
         };
 
         const LABELS = {
@@ -297,15 +287,18 @@
             const holdingTickers = Object.keys(appState.holdings);
             const allTickers = [...new Set([...holdingTickers, ...INDEX_TICKERS])];
 
-            document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-gray-500">Syncing ${allTickers.length} tickers...</div>`;
+            document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-gray-500">Syncing ${allTickers.length} tickers via NAS...</div>`;
             
             const requests = allTickers.map(async (ticker) => {
                 try {
-                    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5y&interval=1d`;
-                    const res = await fetch(CORS_PROXY + encodeURIComponent(yahooUrl));
-                    const data = await res.json();
-                    if(!data.chart || !data.chart.result) throw new Error("Invalid");
+                    // NEW: Fetch from your NAS Proxy
+                    const proxyUrl = `${NAS_PROXY_BASE}/quote?ticker=${ticker}`;
+                    const res = await fetch(proxyUrl);
                     
+                    if (!res.ok) throw new Error(`NAS Proxy Error: ${res.status}`);
+                    const data = await res.json();
+                    
+                    if(!data.chart || !data.chart.result) throw new Error("Invalid Yahoo Data");
                     const meta = data.chart.result[0].meta;
                     const quotes = data.chart.result[0].indicators.quote[0];
                     const timestamps = data.chart.result[0].timestamp || [];
@@ -333,7 +326,19 @@
                         const todayNY = getNYDate(Date.now()/1000);
                         appState.holdings[ticker].priceMap[todayNY] = meta.regularMarketPrice;
                     }
-                } catch (e) { console.error(e); }
+                } catch (e) { 
+                    console.error(`Fetch error ${ticker}`, e);
+                    // Robust Fallback: prevent crash if proxy fails
+                    if(appState.holdings[ticker]) {
+                        const s = appState.holdings[ticker];
+                        if (s.currentPrice === undefined) {
+                            s.currentPrice = s.avgCost || 0;
+                            s.prevClose = s.avgCost || 0;
+                            s.history = [];
+                            s.priceMap = {};
+                        }
+                    }
+                }
             });
             await Promise.all(requests);
         }
@@ -443,7 +448,7 @@
                 return { text, boxColor };
             }
 
-            if (!stock) return { text: "Err", boxColor: "bg-gray-500" };
+            if (!stock || stock.currentPrice === undefined) return { text: "---", boxColor: "bg-gray-400" };
 
             const isWatchlist = stock.shares === 0;
             const history1Y = filterHistory(stock.history, '1Y'); 
@@ -490,7 +495,6 @@
 
         function updateVisiblePrices(section) {
             const boxes = document.querySelectorAll(`.price-box-${section}`);
-            
             let labelId = "", labelText = "";
             if(section === 'active') { labelId='active-mode-label'; labelText=LABELS[appState.activeDisplayMode]; }
             else if(section === 'watchlist') { labelId='watchlist-mode-label'; labelText=LABELS[appState.watchlistDisplayMode]; }
@@ -501,7 +505,7 @@
                 const ticker = box.getAttribute('data-ticker');
                 const { text, boxColor } = calculateDisplayValue(ticker, section);
                 box.innerText = text;
-                box.classList.remove('bg-rh-green', 'bg-rh-red');
+                box.classList.remove('bg-rh-green', 'bg-rh-red', 'bg-gray-400');
                 box.classList.add(boxColor);
             });
         }
@@ -528,10 +532,6 @@
                 const sparkData = history1Y.map(h => h.price);
                 
                 const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
-                
-                // Determine sparkline color based on mode
-                // For watchlist (Yearly), use Yearly Logic. For Active, use Daily Logic.
-                // We can infer direction from boxColor (green/red)
                 const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
@@ -686,8 +686,9 @@
             // OPTIMIZATION: Update Text Only (No Re-render)
             updateVisiblePrices(appState.currentModalTarget);
         }
-        function formatCurrency(val) { return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-        function formatIndex(val) { return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+        
+        function formatCurrency(val) { if (val === undefined || val === null || isNaN(val)) return '---'; return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+        function formatIndex(val) { if (val === undefined || val === null || isNaN(val)) return '---'; return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
         init();
     </script>
