@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portfolio Tracker</title>
     
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    <script src="tailwindcss.js"></script>
+    <script src="papaparse.js"></script>
+    <script src="chart.js"></script>
+    <script src="dayjs.js"></script>
     
     <style>
         :root { --rh-green: #00c805; --rh-red: #ff5000; }
@@ -159,10 +159,22 @@
         const INDEX_NAMES = {'^GSPC': 'S&P 500', '^DJI': 'Dow Jones', '^IXIC': 'NASDAQ'};
 
         let appState = {
-            transactions: [], holdings: {}, indexes: {}, allLots: [], portfolioHistory: [],
-            realizedYTD: 0, realizedTotal: 0, currentYear: new Date().getFullYear(),
-            activeDisplayMode: 'price', watchlistDisplayMode: 'year_pct', indexDisplayMode: 'index_pct',
-            activeTimeframe: '1Y', currentModalTarget: 'active' 
+            transactions: [], 
+            holdings: {},
+            indexes: {}, 
+            allLots: [],
+            portfolioHistory: [],
+            realizedYTD: 0,
+            realizedTotal: 0,
+            currentYear: new Date().getFullYear(),
+            
+            // Display modes
+            activeDisplayMode: 'price',
+            watchlistDisplayMode: 'year_pct',
+            indexDisplayMode: 'index_pct',
+            
+            activeTimeframe: '1Y',
+            currentModalTarget: 'active' 
         };
 
         const LABELS = {
@@ -495,6 +507,7 @@
 
         function updateVisiblePrices(section) {
             const boxes = document.querySelectorAll(`.price-box-${section}`);
+            
             let labelId = "", labelText = "";
             if(section === 'active') { labelId='active-mode-label'; labelText=LABELS[appState.activeDisplayMode]; }
             else if(section === 'watchlist') { labelId='watchlist-mode-label'; labelText=LABELS[appState.watchlistDisplayMode]; }
@@ -532,6 +545,10 @@
                 const sparkData = history1Y.map(h => h.price);
                 
                 const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
+                
+                // Determine sparkline color based on mode
+                // For watchlist (Yearly), use Yearly Logic. For Active, use Daily Logic.
+                // We can infer direction from boxColor (green/red)
                 const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
