@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Tracker</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    
+    <style>
+        :root { --rh-green: #00c805; --rh-red: #ff5000; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .text-rh-green { color: var(--rh-green); }
+        .text-rh-red { color: var(--rh-red); }
+        .bg-rh-green { background-color: var(--rh-green); }
+        .bg-rh-red { background-color: var(--rh-red); }
+        
+        .price-box { cursor: pointer; transition: all 0.2s; user-select: none; }
+        .price-box:hover { filter: brightness(1.1); transform: scale(1.02); }
+        .price-box:active { transform: scale(0.98); }
+
+        /* Modals */
+        .modal { transition: opacity 0.2s ease-in-out; }
+        .modal.hidden { opacity: 0; pointer-events: none; }
+        .modal:not(.hidden) { opacity: 1; pointer-events: auto; }
+    </style>
+</head>
+<body class="bg-white text-black max-w-2xl mx-auto pb-20 relative min-h-screen">
+
+    <div class="p-6 bg-white border-b border-gray-100">
+        <div class="mb-1">
+            <h1 id="portfolio-value" class="text-4xl font-bold tracking-tight">Loading...</h1>
+        </div>
+        <div class="flex items-center text-sm font-medium mb-4">
+            <span id="portfolio-change-icon" class="mr-1"></span>
+            <span id="portfolio-change-val">Initializing...</span>
+            <span id="timeframe-label" class="text-gray-400 ml-2 font-normal"></span>
+        </div>
+
+        <div class="h-64 w-full mb-6 relative">
+            <canvas id="mainChart"></canvas>
+        </div>
+
+        <div class="flex justify-between font-bold text-xs text-gray-500 px-2" id="time-filters">
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('1W', 'Past Week', this)">1W</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('1M', 'Past Month', this)">1M</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('3M', 'Past 3 Months', this)">3M</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('YTD', 'Year to Date', this)">YTD</button>
+            <button class="hover:text-black py-1 px-2 text-rh-green font-bold" onclick="updateTimeframe('1Y', 'Past Year', this)">1Y</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('5Y', 'Past 5 Years', this)">5Y</button>
+            <button class="hover:text-black py-1 px-2" onclick="updateTimeframe('ALL', 'All Time', this)">ALL</button>
+        </div>
+    </div>
+
+    <div id="active-section" class="mt-4">
+        <div class="px-6 py-2 border-b border-gray-100 flex justify-between items-end">
+            <span class="text-xl font-bold">Stocks & ETFs</span>
+            <span id="active-mode-label" class="text-xs text-gray-400 font-medium uppercase tracking-wider">Last Price</span>
+        </div>
+        <div id="stock-list" class="divide-y divide-gray-100 min-h-[100px]">
+            <div class="p-6 text-center text-gray-500">Connecting to NAS Proxy...</div>
+        </div>
+    </div>
+
+    <div id="watchlist-section" class="mt-8 hidden">
+        <div class="px-6 py-2 border-b border-gray-100 flex justify-between items-end">
+            <span class="text-xl font-bold text-gray-800">Watchlist</span>
+            <span id="watchlist-mode-label" class="text-xs text-gray-400 font-medium uppercase tracking-wider">Last Price</span>
+        </div>
+        <div id="watchlist-list" class="divide-y divide-gray-100"></div>
+    </div>
+
+    <div id="indexes-section" class="mt-8">
+        <div class="px-6 py-2 border-b border-gray-100 flex justify-between items-end">
+            <span class="text-xl font-bold text-gray-800">Market Indexes</span>
+            <span id="index-mode-label" class="text-xs text-gray-400 font-medium uppercase tracking-wider">Yearly Change %</span>
+        </div>
+        <div id="indexes-list" class="divide-y divide-gray-100">
+            <div class="p-6 text-center text-gray-500">Loading Indexes...</div>
+        </div>
+    </div>
+
+    <div class="mt-8 px-6 pb-12">
+        <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Performance Summary</h3>
+        <div class="bg-gray-50 rounded-xl p-4 mb-3 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Realized Gain (YTD <span id="ytd-year"></span>)</span>
+            <span id="realized-ytd" class="font-bold text-gray-900">$0.00</span>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Realized Gain (All Time)</span>
+            <span id="realized-total" class="font-bold text-gray-900">$0.00</span>
+        </div>
+    </div>
+
+    <div id="view-modal" class="modal hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm" onclick="closeModal('view-modal')">
+        <div class="bg-white w-full max-w-sm mx-4 sm:rounded-xl rounded-t-xl p-4 shadow-2xl transform transition-transform" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
+                <h3 class="font-bold text-lg">Display Mode</h3>
+                <button onclick="closeModal('view-modal')" class="text-gray-400 hover:text-black">✕</button>
+            </div>
+            <div class="space-y-2">
+                <button id="btn-price" onclick="changeDisplayMode('price')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Last Price</span></button>
+                
+                <button id="btn-day-gain" onclick="changeDisplayMode('day_gain')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Daily Return ($)</span></button>
+                <button id="btn-day-pct" onclick="changeDisplayMode('day_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Daily Return (%)</span></button>
+                <button id="btn-total-gain" onclick="changeDisplayMode('total_gain')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Return ($)</span></button>
+                <button id="btn-total-pct" onclick="changeDisplayMode('total_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Return (%)</span></button>
+                <button id="btn-equity" onclick="changeDisplayMode('equity')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between"><span>Total Equity</span></button>
+
+                <button id="btn-year-gain" onclick="changeDisplayMode('year_gain')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Return ($)</span></button>
+                <button id="btn-year-pct" onclick="changeDisplayMode('year_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Return (%)</span></button>
+
+                <button id="btn-index-val" onclick="changeDisplayMode('index_val')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Index Value</span></button>
+                <button id="btn-index-chg" onclick="changeDisplayMode('index_chg')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (Pts)</span></button>
+                <button id="btn-index-pct" onclick="changeDisplayMode('index_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (%)</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="history-modal" class="modal hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm" onclick="closeModal('history-modal')">
+        <div class="bg-white w-full max-w-lg mx-4 sm:rounded-xl rounded-t-xl shadow-2xl transform transition-transform h-[80vh] flex flex-col" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center p-4 border-b border-gray-100">
+                <div>
+                    <h3 class="font-bold text-xl" id="history-ticker">Ticker</h3>
+                    <p class="text-xs text-gray-400">Transaction History</p>
+                </div>
+                <button onclick="closeModal('history-modal')" class="text-gray-400 hover:text-black p-2 text-xl">✕</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs text-gray-500 uppercase bg-gray-50 sticky top-0">
+                        <tr>
+                            <th class="px-3 py-2">Date</th>
+                            <th class="px-3 py-2">Type</th>
+                            <th class="px-3 py-2 text-right">Price</th>
+                            <th class="px-3 py-2 text-right">Shares</th>
+                            <th class="px-3 py-2 text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body" class="divide-y divide-gray-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CSV_FILES = {
+            in: 'https://objectstorage.ap-osaka-1.oraclecloud.com/n/axfishw4p7q2/b/stocks/o/stockin.csv',
+            out: 'https://objectstorage.ap-osaka-1.oraclecloud.com/n/axfishw4p7q2/b/stocks/o/stockout.csv'
+        };
+
+        // --- NAS CONFIGURATION ---
+        const NAS_PROXY_BASE = 'https://weblog.tskspree.link:3030'; 
+
+        const INDEX_TICKERS = ['^GSPC', '^DJI', '^IXIC'];
+        const INDEX_NAMES = {'^GSPC': 'S&P 500', '^DJI': 'Dow Jones', '^IXIC': 'NASDAQ'};
+
+        let appState = {
+            transactions: [], holdings: {}, indexes: {}, allLots: [], portfolioHistory: [],
+            realizedYTD: 0, realizedTotal: 0, currentYear: new Date().getFullYear(),
+            activeDisplayMode: 'price', watchlistDisplayMode: 'year_pct', indexDisplayMode: 'index_pct',
+            activeTimeframe: '1Y', currentModalTarget: 'active' 
+        };
+
+        const LABELS = {
+            price: 'Last Price', day_gain: 'Daily Return', day_pct: 'Daily Return %',
+            total_gain: 'Total Return', total_pct: 'Total Return %', equity: 'Equity',
+            year_gain: 'Yearly Return', year_pct: 'Yearly Return %',
+            index_val: 'Index Value', index_chg: 'Yearly Change', index_pct: 'Yearly Change %'
+        };
+
+        function getNYDate(timestamp) {
+            const date = new Date(timestamp * 1000); 
+            return date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+        }
+
+        async function init() {
+            try {
+                const [inRes, outRes] = await Promise.all([fetch(CSV_FILES.in), fetch(CSV_FILES.out)]);
+                if (!inRes.ok || !outRes.ok) throw new Error("Failed to fetch CSV files.");
+
+                const inData = Papa.parse(await inRes.text(), { header: true, skipEmptyLines: true }).data;
+                const outData = Papa.parse(await outRes.text(), { header: true, skipEmptyLines: true }).data;
+
+                let transactions = [];
+                inData.forEach(row => { if(row['股票代码']) transactions.push(parseTransaction(row, 'buy')); });
+                outData.forEach(row => { if(row['股票代码']) transactions.push(parseTransaction(row, 'sell')); });
+                transactions.sort((a, b) => a.date - b.date);
+
+                appState.transactions = transactions;
+                if(transactions.length > 0) appState.currentYear = Math.max(...transactions.map(t => t.year));
+
+                calculateHoldings(transactions);
+                appState.allLots = calculateAllLots(transactions);
+
+                await fetchRealMarketData();
+                buildPortfolioHistory(); 
+                updateTimeframe('1Y', 'Past Year');
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-red-500">Error: ${err.message}</div>`;
+            }
+        }
+
+        function parseTransaction(row, type) {
+            const dateStr = type === 'buy' ? row['购入时间'] : row['售出时间'];
+            const fmtDate = dateStr ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : new Date().toISOString().split('T')[0];
+            const priceVal = parseFloat((type === 'buy' ? row['购入价格'] : row['售出价格']).replace(/[$,]/g, ''));
+            const volVal = parseInt(type === 'buy' ? row['购入数量'] : row['售出数量'], 10);
+            
+            const estDate = new Date(`${fmtDate}T12:00:00-05:00`); 
+
+            return {
+                ticker: row['股票代码'], type: type, date: estDate, dateStr: fmtDate, timestamp: estDate.getTime()/1000,
+                year: parseInt(dateStr.substring(0,4)), price: priceVal, volume: volVal
+            };
+        }
+
+        function calculateHoldings(transactions) {
+            const holdings = {};
+            let realizedTotal = 0, realizedYTD = 0;
+            transactions.forEach(t => {
+                if (!holdings[t.ticker]) holdings[t.ticker] = { shares: 0, totalCost: 0 };
+                if (t.type === 'buy') {
+                    holdings[t.ticker].shares += t.volume;
+                    holdings[t.ticker].totalCost += (t.price * t.volume);
+                } else {
+                    if (holdings[t.ticker].shares > 0) {
+                        const avgCostPerShare = holdings[t.ticker].totalCost / holdings[t.ticker].shares;
+                        const gain = (t.price - avgCostPerShare) * t.volume;
+                        realizedTotal += gain;
+                        if (t.year === appState.currentYear) realizedYTD += gain;
+                        holdings[t.ticker].totalCost -= (avgCostPerShare * t.volume);
+                        holdings[t.ticker].shares -= t.volume;
+                    }
+                }
+            });
+            Object.keys(holdings).forEach(ticker => {
+                const h = holdings[ticker];
+                if (h.shares <= 0.001) { h.shares = 0; h.avgCost = 0; } 
+                else { h.avgCost = h.totalCost / h.shares; }
+            });
+            appState.holdings = holdings;
+            appState.realizedTotal = realizedTotal;
+            appState.realizedYTD = realizedYTD;
+        }
+
+        function calculateAllLots(transactions) {
+            let allLots = [];
+            let openLotsMap = {}; 
+            transactions.forEach(t => {
+                if (!openLotsMap[t.ticker]) openLotsMap[t.ticker] = [];
+                if (t.type === 'buy') {
+                    const newLot = { ticker: t.ticker, buyDate: t.timestamp, buyPrice: t.price, shares: t.volume, sellDate: null, sellPrice: null };
+                    allLots.push(newLot);
+                    openLotsMap[t.ticker].push(allLots.length - 1);
+                } else { 
+                    let sharesNeeded = t.volume;
+                    while(sharesNeeded > 0 && openLotsMap[t.ticker].length > 0) {
+                        const lotIndex = openLotsMap[t.ticker][0];
+                        const lot = allLots[lotIndex];
+                        if (lot.shares <= sharesNeeded) {
+                            lot.sellDate = t.timestamp;
+                            lot.sellPrice = t.price;
+                            sharesNeeded -= lot.shares;
+                            openLotsMap[t.ticker].shift();
+                        } else {
+                            const remainingLot = { ...lot, shares: lot.shares - sharesNeeded };
+                            lot.shares = sharesNeeded;
+                            lot.sellDate = t.timestamp;
+                            lot.sellPrice = t.price;
+                            allLots.push(remainingLot);
+                            openLotsMap[t.ticker][0] = allLots.length - 1; 
+                            sharesNeeded = 0;
+                        }
+                    }
+                }
+            });
+            return allLots;
+        }
+
+        async function fetchRealMarketData() {
+            const holdingTickers = Object.keys(appState.holdings);
+            const allTickers = [...new Set([...holdingTickers, ...INDEX_TICKERS])];
+
+            document.getElementById('stock-list').innerHTML = `<div class="p-6 text-center text-gray-500">Syncing ${allTickers.length} tickers via NAS...</div>`;
+            
+            const requests = allTickers.map(async (ticker) => {
+                try {
+                    // NEW: Fetch from your NAS Proxy
+                    const proxyUrl = `${NAS_PROXY_BASE}/quote?ticker=${ticker}`;
+                    const res = await fetch(proxyUrl);
+                    
+                    if (!res.ok) throw new Error(`NAS Proxy Error: ${res.status}`);
+                    const data = await res.json();
+                    
+                    if(!data.chart || !data.chart.result) throw new Error("Invalid Yahoo Data");
+                    const meta = data.chart.result[0].meta;
+                    const quotes = data.chart.result[0].indicators.quote[0];
+                    const timestamps = data.chart.result[0].timestamp || [];
+                    const history = timestamps.map((ts, i) => ({ date: ts, price: quotes.close[i] })).filter(h => h.price !== null);
+
+                    const priceObj = {
+                        currentPrice: meta.regularMarketPrice,
+                        prevClose: meta.chartPreviousClose,
+                        history: history
+                    };
+
+                    if (INDEX_TICKERS.includes(ticker)) {
+                        appState.indexes[ticker] = priceObj;
+                    } 
+                    
+                    if(appState.holdings[ticker]) {
+                        appState.holdings[ticker].currentPrice = priceObj.currentPrice;
+                        appState.holdings[ticker].prevClose = priceObj.prevClose;
+                        appState.holdings[ticker].history = priceObj.history;
+                        
+                        appState.holdings[ticker].priceMap = {};
+                        history.forEach(h => {
+                            appState.holdings[ticker].priceMap[getNYDate(h.date)] = h.price;
+                        });
+                        const todayNY = getNYDate(Date.now()/1000);
+                        appState.holdings[ticker].priceMap[todayNY] = meta.regularMarketPrice;
+                    }
+                } catch (e) { 
+                    console.error(`Fetch error ${ticker}`, e);
+                    // Robust Fallback: prevent crash if proxy fails
+                    if(appState.holdings[ticker]) {
+                        const s = appState.holdings[ticker];
+                        if (s.currentPrice === undefined) {
+                            s.currentPrice = s.avgCost || 0;
+                            s.prevClose = s.avgCost || 0;
+                            s.history = [];
+                            s.priceMap = {};
+                        }
+                    }
+                }
+            });
+            await Promise.all(requests);
+        }
+
+        function buildPortfolioHistory() {
+            const allDates = new Set();
+            const todayNY = getNYDate(Date.now()/1000);
+            allDates.add(todayNY);
+
+            Object.values(appState.holdings).forEach(s => {
+                if(s.history) s.history.forEach(h => allDates.add(getNYDate(h.date)));
+            });
+            appState.allLots.forEach(lot => {
+                allDates.add(getNYDate(lot.buyDate));
+                if(lot.sellDate) allDates.add(getNYDate(lot.sellDate));
+            });
+
+            const sortedDateStrs = Array.from(allDates).sort();
+            const lastKnownPrices = {}; 
+
+            appState.portfolioHistory = sortedDateStrs.map(dateStr => {
+                const d = new Date(dateStr + "T12:00:00-05:00");
+                const timestamp = d.getTime() / 1000;
+
+                Object.keys(appState.holdings).forEach(ticker => {
+                    const price = appState.holdings[ticker].priceMap?.[dateStr];
+                    if(price !== undefined) lastKnownPrices[ticker] = price;
+                });
+
+                let totalValue = 0;
+
+                appState.allLots.forEach(lot => {
+                    const buyDateStr = getNYDate(lot.buyDate);
+                    const sellDateStr = lot.sellDate ? getNYDate(lot.sellDate) : null;
+
+                    if (dateStr < buyDateStr) {
+                        totalValue += (lot.shares * lot.buyPrice);
+                    } else if (sellDateStr && dateStr >= sellDateStr) {
+                        totalValue += (lot.shares * lot.sellPrice);
+                    } else {
+                        let price = lastKnownPrices[lot.ticker];
+                        if (price === undefined) price = lot.buyPrice;
+                        totalValue += (lot.shares * price);
+                    }
+                });
+
+                return { date: timestamp, value: totalValue };
+            });
+        }
+
+        function filterHistory(data, timeframe) {
+            if(!data || data.length === 0) return [];
+            const now = dayjs();
+            let cutoff = now.subtract(1, 'year');
+            if(timeframe==='1W') cutoff = now.subtract(1, 'week');
+            else if(timeframe==='1M') cutoff = now.subtract(1, 'month');
+            else if(timeframe==='3M') cutoff = now.subtract(3, 'month');
+            else if(timeframe==='YTD') cutoff = dayjs().startOf('year');
+            else if(timeframe==='5Y') cutoff = now.subtract(5, 'year');
+            else if(timeframe==='ALL') return data;
+            return data.filter(d => d.date >= cutoff.unix());
+        }
+
+        function updateTimeframe(tf, label, btn) {
+            appState.activeTimeframe = tf;
+            document.getElementById('timeframe-label').innerText = label || tf;
+            if(btn) {
+                document.querySelectorAll('#time-filters button').forEach(b => {
+                    b.classList.remove('text-rh-green', 'text-rh-red', 'font-bold');
+                    b.classList.add('text-gray-500');
+                });
+            }
+            renderApp();
+            if(btn) {
+                const isUp = (appState.portfolioHistory.length > 0 && appState.portfolioHistory[appState.portfolioHistory.length-1].value >= appState.portfolioHistory[0].value);
+                btn.classList.remove('text-gray-500');
+                btn.classList.add(isUp ? 'text-rh-green' : 'text-rh-red', 'font-bold');
+            }
+        }
+
+        function getPriorClose(stock) {
+            const todayNY = getNYDate(Date.now() / 1000);
+            if (stock.history && stock.history.length > 0) {
+                for (let i = stock.history.length - 1; i >= 0; i--) {
+                    if (getNYDate(stock.history[i].date) !== todayNY) return stock.history[i].price;
+                }
+            }
+            return stock.prevClose || stock.currentPrice;
+        }
+
+        function calculateDisplayValue(ticker, section) {
+            let text = "", boxColor = "";
+            const stock = appState.holdings[ticker];
+            const idx = appState.indexes[ticker];
+            
+            if (section === 'index' && idx) {
+                const history1Y = filterHistory(idx.history, '1Y');
+                const startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
+                const diff = idx.currentPrice - startPrice;
+                const pct = startPrice > 0 ? (diff / startPrice) * 100 : 0;
+                const isUp = diff >= 0;
+                boxColor = isUp ? 'bg-rh-green' : 'bg-rh-red';
+
+                if(appState.indexDisplayMode === 'index_val') text = formatIndex(idx.currentPrice);
+                else if(appState.indexDisplayMode === 'index_chg') text = (diff>0?"+":"") + diff.toFixed(2);
+                else text = (diff>0?"+":"") + pct.toFixed(2) + "%";
+                return { text, boxColor };
+            }
+
+            if (!stock || stock.currentPrice === undefined) return { text: "---", boxColor: "bg-gray-400" };
+
+            const isWatchlist = stock.shares === 0;
+            const history1Y = filterHistory(stock.history, '1Y'); 
+            const todayNY = getNYDate(Date.now() / 1000);
+            
+            const todayBuys = appState.transactions.filter(t => t.ticker === ticker && t.type === 'buy' && t.dateStr === todayNY);
+            let sharesToday = 0, costToday = 0;
+            todayBuys.forEach(t => { sharesToday += t.volume; costToday += (t.price * t.volume); });
+            const effectiveSharesToday = Math.min(stock.shares, sharesToday);
+            const effectiveSharesPrior = stock.shares - effectiveSharesToday;
+            const avgBuyPriceToday = effectiveSharesToday > 0 ? costToday / sharesToday : 0;
+            const priorClose = getPriorClose(stock);
+            
+            if (isWatchlist) {
+                const startPrice = history1Y.length > 0 ? history1Y[0].price : stock.currentPrice;
+                const diffYear = stock.currentPrice - startPrice;
+                const pctYear = startPrice > 0 ? (diffYear / startPrice) * 100 : 0;
+                boxColor = diffYear >= 0 ? 'bg-rh-green' : 'bg-rh-red';
+                if (appState.watchlistDisplayMode === 'price') text = formatCurrency(stock.currentPrice);
+                else if (appState.watchlistDisplayMode === 'year_gain') text = (diffYear > 0 ? "+" : "") + formatCurrency(diffYear);
+                else if (appState.watchlistDisplayMode === 'year_pct') text = (pctYear > 0 ? "+" : "") + pctYear.toFixed(2) + "%";
+                else text = formatCurrency(stock.currentPrice);
+            } else {
+                const gainFromPrior = effectiveSharesPrior * (stock.currentPrice - priorClose);
+                const gainFromToday = effectiveSharesToday * (stock.currentPrice - avgBuyPriceToday);
+                const totalDailyGain = gainFromPrior + gainFromToday;
+                const dailyBasis = (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
+                const totalDailyPct = dailyBasis > 0 ? (totalDailyGain / dailyBasis) * 100 : 0;
+                const diffTotal = (stock.currentPrice - stock.avgCost) * stock.shares;
+                const pctTotal = ((stock.currentPrice - stock.avgCost) / stock.avgCost) * 100;
+                const equity = stock.currentPrice * stock.shares;
+                boxColor = (totalDailyGain >= 0) ? 'bg-rh-green' : 'bg-rh-red';
+                switch(appState.activeDisplayMode) {
+                    case 'price': text = formatCurrency(stock.currentPrice); break;
+                    case 'day_gain': text = (totalDailyGain>0?"+":"") + formatCurrency(totalDailyGain); break;
+                    case 'day_pct': text = (totalDailyPct>0?"+":"") + totalDailyPct.toFixed(2) + "%"; break;
+                    case 'total_gain': text = (diffTotal>0?"+":"") + formatCurrency(diffTotal); boxColor = (diffTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
+                    case 'total_pct': text = (pctTotal>0?"+":"") + pctTotal.toFixed(2) + "%"; boxColor = (pctTotal>=0)?'bg-rh-green':'bg-rh-red'; break;
+                    case 'equity': text = formatCurrency(equity); break;
+                }
+            }
+            return { text, boxColor };
+        }
+
+        function updateVisiblePrices(section) {
+            const boxes = document.querySelectorAll(`.price-box-${section}`);
+            let labelId = "", labelText = "";
+            if(section === 'active') { labelId='active-mode-label'; labelText=LABELS[appState.activeDisplayMode]; }
+            else if(section === 'watchlist') { labelId='watchlist-mode-label'; labelText=LABELS[appState.watchlistDisplayMode]; }
+            else if(section === 'index') { labelId='index-mode-label'; labelText=LABELS[appState.indexDisplayMode]; }
+            document.getElementById(labelId).innerText = labelText;
+
+            boxes.forEach(box => {
+                const ticker = box.getAttribute('data-ticker');
+                const { text, boxColor } = calculateDisplayValue(ticker, section);
+                box.innerText = text;
+                box.classList.remove('bg-rh-green', 'bg-rh-red', 'bg-gray-400');
+                box.classList.add(boxColor);
+            });
+        }
+
+        function renderApp() { renderHeader(); renderLists(); renderRealized(); renderIndexes(); }
+
+        function renderLists() {
+            const activeList = document.getElementById('stock-list');
+            const watchlistList = document.getElementById('watchlist-list');
+            const watchlistSection = document.getElementById('watchlist-section');
+            activeList.innerHTML = '';
+            watchlistList.innerHTML = '';
+            document.getElementById('active-mode-label').innerText = LABELS[appState.activeDisplayMode];
+            document.getElementById('watchlist-mode-label').innerText = LABELS[appState.watchlistDisplayMode];
+            
+            let hasWatchlistItems = false;
+
+            Object.keys(appState.holdings).sort().forEach(ticker => {
+                const stock = appState.holdings[ticker];
+                const isWatchlist = stock.shares === 0;
+                if (isWatchlist) hasWatchlistItems = true;
+
+                const history1Y = filterHistory(stock.history, '1Y'); 
+                const sparkData = history1Y.map(h => h.price);
+                
+                const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
+                const isGreen = boxColor.includes('green');
+
+                const row = document.createElement('div');
+                row.className = "px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition border-b border-gray-50 cursor-pointer";
+                row.onclick = () => openHistory(ticker);
+                const canvasId = `chart-${ticker}`;
+                const sectionClass = isWatchlist ? 'price-box-watchlist' : 'price-box-active';
+
+                row.innerHTML = `
+                    <div class="w-1/4">
+                        <div class="font-bold text-base">${ticker}</div>
+                        <div class="text-xs text-gray-500">${isWatchlist ? 'Sold' : stock.shares + ' shares'}</div>
+                    </div>
+                    <div class="w-1/3 h-12 px-2"><canvas id="${canvasId}" class="w-full h-full"></canvas></div>
+                    <div class="w-1/3 flex justify-end">
+                        <div class="price-box ${sectionClass} ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                             data-ticker="${ticker}"
+                             onclick="event.stopPropagation(); openDisplayModal(${isWatchlist})">
+                             ${text}
+                        </div>
+                    </div>`;
+                
+                if (isWatchlist) watchlistList.appendChild(row);
+                else activeList.appendChild(row);
+                drawSparkline(canvasId, sparkData, isGreen ? '#00c805' : '#ff5000');
+            });
+
+            if (hasWatchlistItems) watchlistSection.classList.remove('hidden');
+            else watchlistSection.classList.add('hidden');
+        }
+
+        // --- RESTORED openHistory Function ---
+        function openHistory(ticker) {
+            document.getElementById('history-ticker').innerText = ticker;
+            const tbody = document.getElementById('history-table-body');
+            tbody.innerHTML = '';
+            
+            const history = appState.transactions.filter(t => t.ticker === ticker);
+            history.sort((a,b) => a.date - b.date);
+
+            history.forEach(t => {
+                const tr = document.createElement('tr');
+                tr.className = "bg-white border-b hover:bg-gray-50";
+                const typeColor = t.type === 'buy' ? 'text-rh-green font-medium' : 'text-rh-red font-medium';
+                const typeLabel = t.type === 'buy' ? 'Buy' : 'Sell';
+                
+                tr.innerHTML = `
+                    <td class="px-3 py-3 font-medium text-gray-900 whitespace-nowrap">${t.dateStr}</td>
+                    <td class="px-3 py-3 ${typeColor}">${typeLabel}</td>
+                    <td class="px-3 py-3 text-right">${formatCurrency(t.price)}</td>
+                    <td class="px-3 py-3 text-right">${t.volume}</td>
+                    <td class="px-3 py-3 text-right text-gray-500">${formatCurrency(t.price * t.volume)}</td>`;
+                tbody.appendChild(tr);
+            });
+            document.getElementById('history-modal').classList.remove('hidden');
+        }
+
+        function renderIndexes() {
+            const container = document.getElementById('indexes-list');
+            container.innerHTML = '';
+            document.getElementById('index-mode-label').innerText = LABELS[appState.indexDisplayMode];
+
+            INDEX_TICKERS.forEach(ticker => {
+                const idx = appState.indexes[ticker];
+                if (!idx) return;
+                const name = INDEX_NAMES[ticker] || ticker;
+                const history1Y = filterHistory(idx.history, '1Y');
+                const sparkData = history1Y.map(h => h.price);
+                
+                const { text, boxColor } = calculateDisplayValue(ticker, 'index');
+                const isGreen = boxColor.includes('green');
+
+                const row = document.createElement('div');
+                row.className = "px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition border-b border-gray-50 cursor-pointer";
+                const canvasId = `chart-${ticker.replace('^', '')}`;
+                
+                row.innerHTML = `
+                    <div class="w-1/4">
+                        <div class="font-bold text-base">${name}</div>
+                        <div class="text-xs text-gray-500">Index</div>
+                    </div>
+                    <div class="w-1/3 h-12 px-2"><canvas id="${canvasId}" class="w-full h-full"></canvas></div>
+                    <div class="w-1/3 flex justify-end">
+                        <div class="price-box price-box-index ${boxColor} text-white font-medium py-1.5 px-3 rounded text-sm min-w-[90px] text-center shadow-sm" 
+                             data-ticker="${ticker}"
+                             onclick="event.stopPropagation(); openDisplayModal(false, true)">
+                             ${text}
+                        </div>
+                    </div>`;
+                container.appendChild(row);
+                drawSparkline(canvasId, sparkData, isGreen ? '#00c805' : '#ff5000');
+            });
+        }
+
+        function renderHeader() {
+            const filteredData = filterHistory(appState.portfolioHistory, appState.activeTimeframe);
+            if(filteredData.length === 0) return;
+            const currentVal = filteredData[filteredData.length-1].value;
+            const diff = currentVal - filteredData[0].value;
+            const pct = filteredData[0].value > 0 ? (diff / filteredData[0].value) * 100 : 0;
+            const isUp = diff >= 0;
+            const color = isUp ? '#00c805' : '#ff5000';
+            const colorClass = isUp ? 'text-rh-green' : 'text-rh-red';
+
+            document.getElementById('portfolio-value').innerText = formatCurrency(currentVal);
+            document.getElementById('portfolio-change-val').innerHTML = `${isUp?'+':''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`;
+            document.getElementById('portfolio-change-val').className = colorClass;
+            document.getElementById('portfolio-change-icon').innerHTML = isUp ? '▲' : '▼';
+            document.getElementById('portfolio-change-icon').className = `mr-1 ${colorClass}`;
+            
+            let dateFmt = 'MMM D';
+            if(['5Y', 'ALL'].includes(appState.activeTimeframe)) dateFmt = 'MMM D, YYYY';
+            
+            drawMainChart(filteredData.map(d=>d.value), filteredData.map(d=>dayjs.unix(d.date).format(dateFmt)), color);
+        }
+
+        function renderRealized() {
+            document.getElementById('ytd-year').innerText = appState.currentYear;
+            const ytd = appState.realizedYTD, tot = appState.realizedTotal;
+            document.getElementById('realized-ytd').innerHTML = `${ytd>0?'+':''}${formatCurrency(ytd)}`;
+            document.getElementById('realized-ytd').className = `font-bold ${ytd>=0?'text-rh-green':'text-rh-red'}`;
+            document.getElementById('realized-total').innerHTML = `${tot>0?'+':''}${formatCurrency(tot)}`;
+            document.getElementById('realized-total').className = `font-bold ${tot>=0?'text-rh-green':'text-rh-red'}`;
+        }
+        function drawMainChart(data, labels, color) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            if (window.portfolioChart) window.portfolioChart.destroy();
+            window.portfolioChart = new Chart(ctx, { type: 'line', data: { labels: labels, datasets: [{ data: data, borderColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: color, fill: false, tension: 0.1 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { enabled: true, callbacks: { label: c => formatCurrency(c.parsed.y) } } }, scales: { x: { display: false }, y: { display: false } } } });
+        }
+        function drawSparkline(id, data, color) { new Chart(document.getElementById(id).getContext('2d'), { type: 'line', data: { labels: data.map((_, i) => i), datasets: [{ data: data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.1 }] }, options: { responsive: true, maintainAspectRatio: false, events:[], plugins:{legend:{display:false}, tooltip:{enabled:false}}, scales:{x:{display:false}, y:{display:false}} } }); }
+        
+        function openDisplayModal(isWatchlist, isIndex = false) { 
+            appState.currentModalTarget = isIndex ? 'index' : (isWatchlist ? 'watchlist' : 'active');
+            const activeOnly = ['btn-price', 'btn-day-gain', 'btn-day-pct', 'btn-total-gain', 'btn-total-pct', 'btn-equity'];
+            const watchlistOnly = ['btn-price', 'btn-year-gain', 'btn-year-pct'];
+            const indexOnly = ['btn-index-val', 'btn-index-chg', 'btn-index-pct'];
+            [...activeOnly, ...watchlistOnly, ...indexOnly].forEach(id => document.getElementById(id).classList.add('hidden'));
+            if (isIndex) indexOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
+            else if (isWatchlist) watchlistOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
+            else activeOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
+            document.getElementById('view-modal').classList.remove('hidden'); 
+        }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+        
+        function changeDisplayMode(mode) { 
+            if (appState.currentModalTarget === 'watchlist') appState.watchlistDisplayMode = mode;
+            else if (appState.currentModalTarget === 'index') appState.indexDisplayMode = mode;
+            else appState.activeDisplayMode = mode;
+            
+            closeModal('view-modal'); 
+            
+            // OPTIMIZATION: Update Text Only (No Re-render)
+            updateVisiblePrices(appState.currentModalTarget);
+        }
+        
+        function formatCurrency(val) { if (val === undefined || val === null || isNaN(val)) return '---'; return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+        function formatIndex(val) { if (val === undefined || val === null || isNaN(val)) return '---'; return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+        init();
+    </script>
+</body>
+</html>
