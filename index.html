@@ -68,11 +68,11 @@
     <div id="daily-performance-section" class="mt-8 px-6">
         <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Daily Performance</h3>
         <div class="bg-gray-50 rounded-xl p-4 mb-3 flex justify-between items-center">
-            <span class="font-medium text-gray-700">Daily Return ($)</span>
+            <span class="font-medium text-gray-700">Total Daily Return ($)</span>
             <span id="daily-gain-total" class="font-bold text-gray-900">$0.00</span>
         </div>
         <div class="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
-            <span class="font-medium text-gray-700">Daily Return (%)</span>
+            <span class="font-medium text-gray-700">Total Daily Return (%)</span>
             <span id="daily-pct-total" class="font-bold text-gray-900">0.00%</span>
         </div>
     </div>
@@ -126,6 +126,10 @@
                 <button id="btn-year-pct" onclick="changeDisplayMode('year_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Return (%)</span></button>
 
                 <button id="btn-index-val" onclick="changeDisplayMode('index_val')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Index Value</span></button>
+                
+                <button id="btn-index-day-chg" onclick="changeDisplayMode('index_day_chg')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Daily Change (Pts)</span></button>
+                <button id="btn-index-day-pct" onclick="changeDisplayMode('index_day_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Daily Change (%)</span></button>
+                
                 <button id="btn-index-chg" onclick="changeDisplayMode('index_chg')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (Pts)</span></button>
                 <button id="btn-index-pct" onclick="changeDisplayMode('index_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (%)</span></button>
             </div>
@@ -180,10 +184,10 @@
             realizedTotal: 0,
             currentYear: new Date().getFullYear(),
             
-            // Display modes
-            activeDisplayMode: 'price',
+            // UPDATED DEFAULTS:
+            activeDisplayMode: 'day_pct',      // Default: Daily Return %
             watchlistDisplayMode: 'year_pct',
-            indexDisplayMode: 'index_pct',
+            indexDisplayMode: 'index_day_pct', // Default: Daily Change %
             
             activeTimeframe: '1Y',
             currentModalTarget: 'active' 
@@ -193,7 +197,11 @@
             price: 'Last Price', day_gain: 'Daily Return', day_pct: 'Daily Return %',
             total_gain: 'Total Return', total_pct: 'Total Return %', equity: 'Equity',
             year_gain: 'Yearly Return', year_pct: 'Yearly Return %',
-            index_val: 'Index Value', index_chg: 'Yearly Change', index_pct: 'Yearly Change %'
+            
+            // Index Labels
+            index_val: 'Index Value', 
+            index_chg: 'Yearly Change', index_pct: 'Yearly Change %',
+            index_day_chg: 'Daily Change', index_day_pct: 'Daily Change %'
         };
 
         function getNYDate(timestamp) {
@@ -315,7 +323,6 @@
             
             const requests = allTickers.map(async (ticker) => {
                 try {
-                    // NEW: Fetch from your NAS Proxy
                     const proxyUrl = `${NAS_PROXY_BASE}/quote?ticker=${ticker}`;
                     const res = await fetch(proxyUrl);
                     
@@ -352,7 +359,6 @@
                     }
                 } catch (e) { 
                     console.error(`Fetch error ${ticker}`, e);
-                    // Robust Fallback: prevent crash if proxy fails
                     if(appState.holdings[ticker]) {
                         const s = appState.holdings[ticker];
                         if (s.currentPrice === undefined) {
@@ -459,16 +465,30 @@
             const idx = appState.indexes[ticker];
             
             if (section === 'index' && idx) {
-                const history1Y = filterHistory(idx.history, '1Y');
-                const startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
-                const diff = idx.currentPrice - startPrice;
-                const pct = startPrice > 0 ? (diff / startPrice) * 100 : 0;
+                // Determine Mode
+                const mode = appState.indexDisplayMode;
+                let startPrice, endPrice, diff, pct;
+
+                if (mode === 'index_day_chg' || mode === 'index_day_pct') {
+                    // Daily Change
+                    startPrice = idx.prevClose;
+                    endPrice = idx.currentPrice;
+                } else {
+                    // Yearly Change (default fallback for everything else)
+                    const history1Y = filterHistory(idx.history, '1Y');
+                    startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
+                    endPrice = idx.currentPrice;
+                }
+
+                diff = endPrice - startPrice;
+                pct = startPrice > 0 ? (diff / startPrice) * 100 : 0;
                 const isUp = diff >= 0;
                 boxColor = isUp ? 'bg-rh-green' : 'bg-rh-red';
 
-                if(appState.indexDisplayMode === 'index_val') text = formatIndex(idx.currentPrice);
-                else if(appState.indexDisplayMode === 'index_chg') text = (diff>0?"+":"") + diff.toFixed(2);
+                if(mode === 'index_val') text = formatIndex(idx.currentPrice);
+                else if(mode === 'index_day_chg' || mode === 'index_chg') text = (diff>0?"+":"") + diff.toFixed(2);
                 else text = (diff>0?"+":"") + pct.toFixed(2) + "%";
+                
                 return { text, boxColor };
             }
 
@@ -749,11 +769,19 @@
             appState.currentModalTarget = isIndex ? 'index' : (isWatchlist ? 'watchlist' : 'active');
             const activeOnly = ['btn-price', 'btn-day-gain', 'btn-day-pct', 'btn-total-gain', 'btn-total-pct', 'btn-equity'];
             const watchlistOnly = ['btn-price', 'btn-year-gain', 'btn-year-pct'];
-            const indexOnly = ['btn-index-val', 'btn-index-chg', 'btn-index-pct'];
-            [...activeOnly, ...watchlistOnly, ...indexOnly].forEach(id => document.getElementById(id).classList.add('hidden'));
+            const indexOnly = [
+                'btn-index-val', 
+                'btn-index-day-chg', 'btn-index-day-pct', // New Daily
+                'btn-index-chg', 'btn-index-pct'          // Existing Yearly
+            ];
+            
+            // Hide all buttons first
+            document.querySelectorAll('#view-modal button[id^="btn-"]').forEach(btn => btn.classList.add('hidden'));
+
             if (isIndex) indexOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
             else if (isWatchlist) watchlistOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
             else activeOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
+            
             document.getElementById('view-modal').classList.remove('hidden'); 
         }
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
@@ -774,11 +802,5 @@
 
         init();
     </script>
-    <footer style="text-align: center; font-family: 'Courier New'; color: white; margin-top: 40px;">
-	  Copyright © <span id="year"></span> by 老树
-	</footer>
-	<script>
-	  document.getElementById("year").textContent = new Date().getFullYear();
-	</script>
 </body>
 </html>
