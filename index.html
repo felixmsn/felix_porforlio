@@ -184,10 +184,10 @@
             realizedTotal: 0,
             currentYear: new Date().getFullYear(),
             
-            // UPDATED DEFAULTS:
-            activeDisplayMode: 'day_pct',      // Default: Daily Return %
+            // DEFAULTS
+            activeDisplayMode: 'day_pct',      
             watchlistDisplayMode: 'year_pct',
-            indexDisplayMode: 'index_day_pct', // Default: Daily Change %
+            indexDisplayMode: 'index_day_pct',
             
             activeTimeframe: '1Y',
             currentModalTarget: 'active' 
@@ -471,10 +471,11 @@
 
                 if (mode === 'index_day_chg' || mode === 'index_day_pct') {
                     // Daily Change
-                    startPrice = idx.prevClose;
+                    // USE getPriorClose() TO HANDLE TIME ZONES CORRECTLY
+                    startPrice = getPriorClose(idx); 
                     endPrice = idx.currentPrice;
                 } else {
-                    // Yearly Change (default fallback for everything else)
+                    // Yearly Change
                     const history1Y = filterHistory(idx.history, '1Y');
                     startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
                     endPrice = idx.currentPrice;
