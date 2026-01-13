@@ -65,6 +65,18 @@
         </div>
     </div>
 
+    <div id="daily-performance-section" class="mt-8 px-6">
+        <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Daily Performance</h3>
+        <div class="bg-gray-50 rounded-xl p-4 mb-3 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Daily Return ($)</span>
+            <span id="daily-gain-total" class="font-bold text-gray-900">$0.00</span>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
+            <span class="font-medium text-gray-700">Daily Return (%)</span>
+            <span id="daily-pct-total" class="font-bold text-gray-900">0.00%</span>
+        </div>
+    </div>
+
     <div id="watchlist-section" class="mt-8 hidden">
         <div class="px-6 py-2 border-b border-gray-100 flex justify-between items-end">
             <span class="text-xl font-bold text-gray-800">Watchlist</span>
@@ -159,10 +171,22 @@
         const INDEX_NAMES = {'^GSPC': 'S&P 500', '^DJI': 'Dow Jones', '^IXIC': 'NASDAQ'};
 
         let appState = {
-            transactions: [], holdings: {}, indexes: {}, allLots: [], portfolioHistory: [],
-            realizedYTD: 0, realizedTotal: 0, currentYear: new Date().getFullYear(),
-            activeDisplayMode: 'price', watchlistDisplayMode: 'year_pct', indexDisplayMode: 'index_pct',
-            activeTimeframe: '1Y', currentModalTarget: 'active' 
+            transactions: [], 
+            holdings: {},
+            indexes: {}, 
+            allLots: [],
+            portfolioHistory: [],
+            realizedYTD: 0,
+            realizedTotal: 0,
+            currentYear: new Date().getFullYear(),
+            
+            // Display modes
+            activeDisplayMode: 'price',
+            watchlistDisplayMode: 'year_pct',
+            indexDisplayMode: 'index_pct',
+            
+            activeTimeframe: '1Y',
+            currentModalTarget: 'active' 
         };
 
         const LABELS = {
@@ -495,6 +519,7 @@
 
         function updateVisiblePrices(section) {
             const boxes = document.querySelectorAll(`.price-box-${section}`);
+            
             let labelId = "", labelText = "";
             if(section === 'active') { labelId='active-mode-label'; labelText=LABELS[appState.activeDisplayMode]; }
             else if(section === 'watchlist') { labelId='watchlist-mode-label'; labelText=LABELS[appState.watchlistDisplayMode]; }
@@ -510,7 +535,60 @@
             });
         }
 
-        function renderApp() { renderHeader(); renderLists(); renderRealized(); renderIndexes(); }
+        function renderApp() { 
+            renderHeader(); 
+            renderLists(); 
+            renderDailyPerformance(); // <--- NEW RENDER CALL
+            renderRealized(); 
+            renderIndexes(); 
+        }
+
+        function renderDailyPerformance() {
+            let totalDailyGain = 0;
+            let totalDailyBasis = 0;
+            const todayNY = getNYDate(Date.now() / 1000);
+
+            Object.keys(appState.holdings).forEach(ticker => {
+                const stock = appState.holdings[ticker];
+                if (stock.shares <= 0.001) return; // Skip watchlist/sold
+
+                // Logic matching calculateDisplayValue for daily gains
+                const todayBuys = appState.transactions.filter(t => t.ticker === ticker && t.type === 'buy' && t.dateStr === todayNY);
+                let sharesToday = 0, costToday = 0;
+                todayBuys.forEach(t => { sharesToday += t.volume; costToday += (t.price * t.volume); });
+                
+                const effectiveSharesToday = Math.min(stock.shares, sharesToday);
+                const effectiveSharesPrior = stock.shares - effectiveSharesToday;
+                const avgBuyPriceToday = effectiveSharesToday > 0 ? costToday / sharesToday : 0;
+                
+                const currentPrice = stock.currentPrice || 0;
+                const priorClose = getPriorClose(stock) || currentPrice;
+
+                const gainFromPrior = effectiveSharesPrior * (currentPrice - priorClose);
+                const gainFromToday = effectiveSharesToday * (currentPrice - avgBuyPriceToday);
+                
+                totalDailyGain += (gainFromPrior + gainFromToday);
+                
+                // Basis for % calculation
+                totalDailyBasis += (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
+            });
+
+            const totalDailyPct = totalDailyBasis > 0 ? (totalDailyGain / totalDailyBasis) * 100 : 0;
+
+            const gainEl = document.getElementById('daily-gain-total');
+            const pctEl = document.getElementById('daily-pct-total');
+            
+            if(gainEl && pctEl) {
+                const isUp = totalDailyGain >= 0;
+                const colorClass = isUp ? 'text-rh-green' : 'text-rh-red';
+                
+                gainEl.innerHTML = `${isUp ? '+' : ''}${formatCurrency(totalDailyGain)}`;
+                gainEl.className = `font-bold ${colorClass}`;
+                
+                pctEl.innerHTML = `${isUp ? '+' : ''}${totalDailyPct.toFixed(2)}%`;
+                pctEl.className = `font-bold ${colorClass}`;
+            }
+        }
 
         function renderLists() {
             const activeList = document.getElementById('stock-list');
@@ -532,6 +610,10 @@
                 const sparkData = history1Y.map(h => h.price);
                 
                 const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
+                
+                // Determine sparkline color based on mode
+                // For watchlist (Yearly), use Yearly Logic. For Active, use Daily Logic.
+                // We can infer direction from boxColor (green/red)
                 const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
