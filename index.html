@@ -95,7 +95,7 @@
         </div>
     </div>
 
-    <div class="mt-8 px-6 pb-12">
+    <div class="mt-8 px-6">
         <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Performance Summary</h3>
         <div class="bg-gray-50 rounded-xl p-4 mb-3 flex justify-between items-center">
             <span class="font-medium text-gray-700">Realized Gain (YTD <span id="ytd-year"></span>)</span>
@@ -104,6 +104,25 @@
         <div class="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
             <span class="font-medium text-gray-700">Realized Gain (All Time)</span>
             <span id="realized-total" class="font-bold text-gray-900">$0.00</span>
+        </div>
+    </div>
+
+    <div class="mt-8 px-6 pb-12">
+        <h3 class="text-gray-500 font-bold text-xs uppercase mb-3 tracking-wider">Latest Activities</h3>
+        <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs text-gray-500 uppercase bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3">Date</th>
+                        <th class="px-4 py-3">Ticker</th>
+                        <th class="px-4 py-3">Type</th>
+                        <th class="px-4 py-3 text-right">Price</th>
+                        <th class="px-4 py-3 text-right">Shares</th>
+                        <th class="px-4 py-3 text-right">Total</th>
+                    </tr>
+                </thead>
+                <tbody id="latest-activities-list" class="divide-y divide-gray-100"></tbody>
+            </table>
         </div>
     </div>
 
@@ -126,10 +145,8 @@
                 <button id="btn-year-pct" onclick="changeDisplayMode('year_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Return (%)</span></button>
 
                 <button id="btn-index-val" onclick="changeDisplayMode('index_val')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Index Value</span></button>
-                
                 <button id="btn-index-day-chg" onclick="changeDisplayMode('index_day_chg')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Daily Change (Pts)</span></button>
                 <button id="btn-index-day-pct" onclick="changeDisplayMode('index_day_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Daily Change (%)</span></button>
-                
                 <button id="btn-index-chg" onclick="changeDisplayMode('index_chg')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (Pts)</span></button>
                 <button id="btn-index-pct" onclick="changeDisplayMode('index_pct')" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium flex justify-between hidden"><span>Yearly Change (%)</span></button>
             </div>
@@ -562,6 +579,7 @@
             renderDailyPerformance(); // <--- NEW RENDER CALL
             renderRealized(); 
             renderIndexes(); 
+            renderLatestActivities(); // <--- NEW RENDER CALL
         }
 
         function renderDailyPerformance() {
@@ -609,6 +627,34 @@
                 pctEl.innerHTML = `${isUp ? '+' : ''}${totalDailyPct.toFixed(2)}%`;
                 pctEl.className = `font-bold ${colorClass}`;
             }
+        }
+
+        // --- NEW FUNCTION: RENDER LATEST ACTIVITIES ---
+        function renderLatestActivities() {
+            const container = document.getElementById('latest-activities-list');
+            if(!container) return;
+            container.innerHTML = '';
+            
+            // Create a copy and sort descending by date
+            const latest = [...appState.transactions].sort((a, b) => b.date - a.date).slice(0, 5);
+
+            latest.forEach(t => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 transition";
+                
+                const typeColor = t.type === 'buy' ? 'text-rh-green font-medium' : 'text-rh-red font-medium';
+                const typeLabel = t.type === 'buy' ? 'Buy' : 'Sell';
+                
+                tr.innerHTML = `
+                    <td class="px-4 py-3 text-gray-900 whitespace-nowrap">${t.dateStr}</td>
+                    <td class="px-4 py-3 font-bold text-gray-900">${t.ticker}</td>
+                    <td class="px-4 py-3 ${typeColor}">${typeLabel}</td>
+                    <td class="px-4 py-3 text-right">${formatCurrency(t.price)}</td>
+                    <td class="px-4 py-3 text-right">${t.volume}</td>
+                    <td class="px-4 py-3 text-right text-gray-500">${formatCurrency(t.price * t.volume)}</td>
+                `;
+                container.appendChild(tr);
+            });
         }
 
         function renderLists() {
