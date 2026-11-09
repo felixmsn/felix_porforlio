@@ -402,10 +402,32 @@
                 allDates.add(getNYDate(lot.buyDate));
                 if(lot.sellDate) allDates.add(getNYDate(lot.sellDate));
             });
+            
+            // Ensure transaction dates are explicitly included
+            appState.transactions.forEach(t => allDates.add(getNYDate(t.timestamp)));
 
             const sortedDateStrs = Array.from(allDates).sort();
             const lastKnownPrices = {}; 
 
+            // 1. Calculate Initial Principal (Determine absolute max cash drawdown)
+            let runningCash = 0;
+            let minCash = 0;
+            appState.transactions.forEach(t => {
+                let amount = t.price * t.volume;
+                if (t.type === 'buy') {
+                    runningCash -= amount;
+                } else {
+                    runningCash += amount;
+                }
+                if (runningCash < minCash) {
+                    minCash = runningCash;
+                }
+            });
+            
+            // This is the total out-of-pocket cash ever put into the account
+            const initialPrincipal = Math.abs(minCash); 
+
+            // 2. Build explicit Daily Values (Cash + Active Equity)
             appState.portfolioHistory = sortedDateStrs.map(dateStr => {
                 const d = new Date(dateStr + "T12:00:00-05:00");
                 const timestamp = d.getTime() / 1000;
@@ -415,24 +437,34 @@
                     if(price !== undefined) lastKnownPrices[ticker] = price;
                 });
 
-                let totalValue = 0;
+                // A. Compute exact cash balance on this date
+                let currentCash = initialPrincipal;
+                appState.transactions.forEach(t => {
+                    if (getNYDate(t.timestamp) <= dateStr) {
+                        const amount = t.price * t.volume;
+                        if (t.type === 'buy') {
+                            currentCash -= amount;
+                        } else {
+                            currentCash += amount;
+                        }
+                    }
+                });
 
+                // B. Compute total equity of active lots on this date
+                let totalEquity = 0;
                 appState.allLots.forEach(lot => {
                     const buyDateStr = getNYDate(lot.buyDate);
                     const sellDateStr = lot.sellDate ? getNYDate(lot.sellDate) : null;
 
-                    if (dateStr < buyDateStr) {
-                        totalValue += (lot.shares * lot.buyPrice);
-                    } else if (sellDateStr && dateStr >= sellDateStr) {
-                        totalValue += (lot.shares * lot.sellPrice);
-                    } else {
+                    // It's active if bought on/before this date, AND (not sold yet OR sold AFTER this date)
+                    if (buyDateStr <= dateStr && (!sellDateStr || sellDateStr > dateStr)) {
                         let price = lastKnownPrices[lot.ticker];
                         if (price === undefined) price = lot.buyPrice;
-                        totalValue += (lot.shares * price);
+                        totalEquity += (lot.shares * price);
                     }
                 });
 
-                return { date: timestamp, value: totalValue };
+                return { date: timestamp, value: totalEquity + currentCash };
             });
         }
 
@@ -482,17 +514,13 @@
             const idx = appState.indexes[ticker];
             
             if (section === 'index' && idx) {
-                // Determine Mode
                 const mode = appState.indexDisplayMode;
                 let startPrice, endPrice, diff, pct;
 
                 if (mode === 'index_day_chg' || mode === 'index_day_pct') {
-                    // Daily Change
-                    // USE getPriorClose() TO HANDLE TIME ZONES CORRECTLY
                     startPrice = getPriorClose(idx); 
                     endPrice = idx.currentPrice;
                 } else {
-                    // Yearly Change
                     const history1Y = filterHistory(idx.history, '1Y');
                     startPrice = history1Y.length > 0 ? history1Y[0].price : idx.prevClose;
                     endPrice = idx.currentPrice;
@@ -576,10 +604,10 @@
         function renderApp() { 
             renderHeader(); 
             renderLists(); 
-            renderDailyPerformance(); // <--- NEW RENDER CALL
+            renderDailyPerformance(); 
             renderRealized(); 
             renderIndexes(); 
-            renderLatestActivities(); // <--- NEW RENDER CALL
+            renderLatestActivities(); 
         }
 
         function renderDailyPerformance() {
@@ -589,9 +617,8 @@
 
             Object.keys(appState.holdings).forEach(ticker => {
                 const stock = appState.holdings[ticker];
-                if (stock.shares <= 0.001) return; // Skip watchlist/sold
+                if (stock.shares <= 0.001) return;
 
-                // Logic matching calculateDisplayValue for daily gains
                 const todayBuys = appState.transactions.filter(t => t.ticker === ticker && t.type === 'buy' && t.dateStr === todayNY);
                 let sharesToday = 0, costToday = 0;
                 todayBuys.forEach(t => { sharesToday += t.volume; costToday += (t.price * t.volume); });
@@ -608,7 +635,6 @@
                 
                 totalDailyGain += (gainFromPrior + gainFromToday);
                 
-                // Basis for % calculation
                 totalDailyBasis += (effectiveSharesPrior * priorClose) + (effectiveSharesToday * avgBuyPriceToday);
             });
 
@@ -629,13 +655,11 @@
             }
         }
 
-        // --- NEW FUNCTION: RENDER LATEST ACTIVITIES ---
         function renderLatestActivities() {
             const container = document.getElementById('latest-activities-list');
             if(!container) return;
             container.innerHTML = '';
             
-            // Create a copy and sort descending by date
             const latest = [...appState.transactions].sort((a, b) => b.date - a.date).slice(0, 5);
 
             latest.forEach(t => {
@@ -677,10 +701,6 @@
                 const sparkData = history1Y.map(h => h.price);
                 
                 const { text, boxColor } = calculateDisplayValue(ticker, isWatchlist ? 'watchlist' : 'active');
-                
-                // Determine sparkline color based on mode
-                // For watchlist (Yearly), use Yearly Logic. For Active, use Daily Logic.
-                // We can infer direction from boxColor (green/red)
                 const isGreen = boxColor.includes('green');
 
                 const row = document.createElement('div');
@@ -712,7 +732,6 @@
             else watchlistSection.classList.add('hidden');
         }
 
-        // --- RESTORED openHistory Function ---
         function openHistory(ticker) {
             document.getElementById('history-ticker').innerText = ticker;
             const tbody = document.getElementById('history-table-body');
@@ -818,11 +837,10 @@
             const watchlistOnly = ['btn-price', 'btn-year-gain', 'btn-year-pct'];
             const indexOnly = [
                 'btn-index-val', 
-                'btn-index-day-chg', 'btn-index-day-pct', // New Daily
-                'btn-index-chg', 'btn-index-pct'          // Existing Yearly
+                'btn-index-day-chg', 'btn-index-day-pct', 
+                'btn-index-chg', 'btn-index-pct'          
             ];
             
-            // Hide all buttons first
             document.querySelectorAll('#view-modal button[id^="btn-"]').forEach(btn => btn.classList.add('hidden'));
 
             if (isIndex) indexOnly.forEach(id => document.getElementById(id).classList.remove('hidden'));
@@ -839,8 +857,6 @@
             else appState.activeDisplayMode = mode;
             
             closeModal('view-modal'); 
-            
-            // OPTIMIZATION: Update Text Only (No Re-render)
             updateVisiblePrices(appState.currentModalTarget);
         }
         
